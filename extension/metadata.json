@@ -1,0 +1,7 @@
+{
+  "uuid": "codewatch@yevhen-chernenko.github.io",
+  "name": "CodeWatch",
+  "description": "Live Claude Code activity in the top panel.",
+  "shell-version": ["46"],
+  "url": "https://github.com/yevhen-chernenko/codewatch"
+}

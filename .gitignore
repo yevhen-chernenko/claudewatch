@@ -1,0 +1,17 @@
+# AI agent artifacts — must never enter this repo
+.claude/
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Node (hook-handler.js has zero dependencies, but keep this in case tooling is added later)
+node_modules/
+npm-debug.log*
+
+# Local env
+.env
