@@ -33,6 +33,11 @@ echo '{"hook_event_name":"PermissionRequest"}' | node hooks/hook-handler.js
 # same "waiting" transition as Notification above — PermissionRequest and
 # Notification both map to status: waiting_approval in hook-handler.js
 
+echo '{"hook_event_name":"PreToolUse"}' | node hooks/hook-handler.js
+# panel -> "Claude is working..." (orange, pulsing) again — confirms the
+# waiting -> running edge fires once a permission prompt is answered and
+# tool execution resumes, instead of staying blue until Stop
+
 echo '{"hook_event_name":"Stop"}' | node hooks/hook-handler.js
 # panel -> "Claude is done!" (green flash, then standby after 5s)
 # also fires a desktop notification plus a "complete" themed system sound
