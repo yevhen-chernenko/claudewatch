@@ -7,7 +7,7 @@ import GLib from "gi://GLib";
 // is what makes the rate-limit check opt-in rather than automatic.
 export const TOKEN_PATH = GLib.build_filenamev([
   GLib.get_user_config_dir(),
-  "codewatch",
+  "claudewatch",
   "token",
 ]);
 

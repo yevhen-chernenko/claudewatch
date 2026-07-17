@@ -46,7 +46,7 @@ echo '{"hook_event_name":"Stop"}' | node hooks/hook-handler.js
 Inspect the state file directly if the panel doesn't move:
 
 ```sh
-cat "${XDG_STATE_HOME:-$HOME/.local/state}/codewatch/state.json"
+cat "${XDG_STATE_HOME:-$HOME/.local/state}/claudewatch/state.json"
 ```
 
 ## End-to-end
@@ -65,8 +65,8 @@ Click the indicator to open the menu. Needs a `state.json` with `cwd` and
 fake it by hand:
 
 ```sh
-mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/codewatch"
-cat > "${XDG_STATE_HOME:-$HOME/.local/state}/codewatch/state.json" <<EOF
+mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/claudewatch"
+cat > "${XDG_STATE_HOME:-$HOME/.local/state}/claudewatch/state.json" <<EOF
 {
   "status": "done",
   "updated_at": "$(date -Iseconds)",
@@ -88,7 +88,7 @@ EOF
     the menu, or firing either hook event, should refresh the numbers.
   - **5h / 7d rows** — needs a token file first; see
     [EXTENSION.md](EXTENSION.md#setting-up-the-claude-usage-token) for how
-    to create `~/.config/codewatch/token` via `claude setup-token`. They
+    to create `~/.config/claudewatch/token` via `claude setup-token`. They
     stay hidden until a check succeeds, and re-hide while a new check is in
     flight rather than showing stale numbers.
   - **Auto-refresh on task complete** toggle — should be **off** immediately

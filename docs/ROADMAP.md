@@ -18,7 +18,7 @@ for the review/security bar every phase is held to.
   to be something the author (you) can explain. Favor boring, obvious code.
 - **Out of scope for this repo**: the general AI-agent usage/token tracker
   (Claude + Codex + Copilot) is a separate, later project. Don't let it leak
-  into CodeWatch's scope.
+  into ClaudeWatch's scope.
 
 ## Phase 0 — Throwaway prototype (Argos)
 
@@ -53,18 +53,18 @@ format) are expensive to change later.
   without needing a lock.
 - Pin the extension UUID and GSettings schema ID now — both are load-bearing
   for later installs and hard to change after real users have it installed.
-- **Pending rename, not yet actioned**: app display name → "ClaudeWatch for
-  GNOME", repo → `claudewatch` (from CodeWatch/codewatch). No code,
-  `metadata.json`, or GitHub repo changes have been made yet. Resolve this
-  _before_ treating the UUID/GSettings schema ID pin above as final — the
-  UUID is conventionally derived from the name (e.g.
-  `claudewatch@yevhen-chernenko.github.io`), and changing it after real
-  installs exist is exactly the expensive-to-change scenario that bullet
-  warns about. When this is actioned, it touches at minimum:
-  `extension/metadata.json` (`name`, `uuid`, `url`), every `Main.notify(...)`
-  call site (currently titled `"CodeWatch"`), README.md and the doc headers
-  under `docs/`, and — as a separate, externally-visible step — the actual
-  GitHub repository name and git remote URL.
+- **Rename actioned**: app display name → "ClaudeWatch for GNOME", uuid →
+  `claudewatch@yevhen-chernenko.github.io`, repo slug → `claudewatch` (from
+  CodeWatch/codewatch). `extension/metadata.json` (`name`, `uuid`, `url`),
+  every `Main.notify(...)` call site, config/state path segments
+  (`~/.config/claudewatch/`, `~/.local/state/claudewatch/`), README.md, and
+  the doc headers under `docs/` are updated. Still outstanding, as separate
+  externally-visible steps: renaming the actual GitHub repository and git
+  remote URL, and — since no real installs exist yet, so this is still safe
+  to do now rather than expensive later — recreating the GNOME Shell
+  extension symlink under the new uuid and migrating any existing
+  `~/.config/codewatch/` / `~/.local/state/codewatch/` contents to their
+  `claudewatch` paths.
 - GNOME extension skeleton: ESM `extension.js`, `enable()`/`disable()` with
   full symmetry from the very first commit (not retrofitted later), a
   `PanelMenu.Button` with a static icon, a `Gio.FileMonitor` on the sessions

@@ -45,7 +45,7 @@ const WAITING_PULSE_MS = 600;
 // (local session totals plus the opt-in rate-limit check). extension.js
 // only owns file-watching wiring and hands this class parsed state via
 // applyState().
-export class CodeWatchIndicator {
+export class ClaudeWatchIndicator {
   constructor(uuid, name, extensionPath) {
     this._uuid = uuid;
 
@@ -53,7 +53,7 @@ export class CodeWatchIndicator {
 
     this._icon = new St.Icon({
       gicon: Gio.icon_new_for_string(
-        `${extensionPath}/icons/codewatch-symbolic.svg`,
+        `${extensionPath}/icons/claudewatch-symbolic.svg`,
       ),
       icon_size: 16,
       y_align: Clutter.ActorAlign.CENTER,
@@ -234,7 +234,7 @@ export class CodeWatchIndicator {
   // spawning a subprocess, and resolves soundName against the user's
   // current sound theme rather than shipping an audio file.
   _notify(text, soundName) {
-    Main.notify("CodeWatch", text);
+    Main.notify("ClaudeWatch", text);
     global.display.get_sound_player().play_from_theme(soundName, text, null);
   }
 
@@ -286,7 +286,7 @@ export class CodeWatchIndicator {
       Gio.Subprocess.new(["code", cwd], Gio.SubprocessFlags.NONE);
     } catch (e) {
       Main.notify(
-        "CodeWatch",
+        "ClaudeWatch",
         "Couldn't launch VS Code — is `code` on your PATH?",
       );
     }

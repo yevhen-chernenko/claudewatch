@@ -1,12 +1,12 @@
 # Security & GNOME review readiness
 
-Status: planning draft. This is the checklist CodeWatch is designed against
+Status: planning draft. This is the checklist ClaudeWatch is designed against
 from day one, not a hardening pass bolted on at the end. Revisit it whenever
 the architecture changes.
 
 ## Threat model
 
-CodeWatch is a single-user, local-only desktop tool. There is no server
+ClaudeWatch is a single-user, local-only desktop tool. There is no server
 component, and the default posture is no network egress — everything it
 reads and writes stays on the local filesystem. The one deliberate exception
 is the "Claude Usage" rate-limit check; see "Opt-in network egress" below.
@@ -17,19 +17,19 @@ The relevant trust boundaries are:
   calls) and, via `transcript_path`, a pointer to the full session
   transcript. Treat all of it as potentially sensitive — it can include
   proprietary source, credentials a user pasted into a prompt, internal
-  hostnames, etc. CodeWatch should extract only the minimal fields it needs
+  hostnames, etc. ClaudeWatch should extract only the minimal fields it needs
   (session id, tool name, counters, status) and never copy raw tool
   input/output into its own state files unless a specific feature needs it
   and the retention/exposure of that copy has been thought through.
 - **Hook handler → state files**: the state directory
-  (`~/.local/state/codewatch/`) is local-user-only. Create it `0700` and
+  (`~/.local/state/claudewatch/`) is local-user-only. Create it `0700` and
   files `0600` so other local accounts on a shared machine can't read a
   user's live session activity (cwd, counters, transcript path).
 - **State files → GNOME extension**: the extension only ever reads files it
   wrote (or that the hook handler wrote in the same schema). No parsing of
   untrusted remote input, but still validate/guard against a malformed or
   partially-written file (crash-only tolerance, not a crash).
-- **Extension → `~/.claude/settings.json`**: the one place CodeWatch writes
+- **Extension → `~/.claude/settings.json`**: the one place ClaudeWatch writes
   to a file it doesn't own. See the install-flow requirements in
   [ARCHITECTURE.md](ARCHITECTURE.md#install-flow) — explicit user action,
   backup-before-write, merge not overwrite, reversible uninstall.
@@ -50,13 +50,13 @@ model gets invoked, so unlike an earlier version of this feature, checking
 usage costs no API quota. Design constraints that keep this contained:
 
 - **Opt-in by construction, not a setting**: the check does nothing unless
-  `~/.config/codewatch/token` exists. The extension never creates, writes,
+  `~/.config/claudewatch/token` exists. The extension never creates, writes,
   or discovers this file itself — the user creates it manually by running
   `claude setup-token` and saving the output there (`chmod 600`). No file,
   no network call, ever. This is a deliberately narrower trust boundary
   than reading the interactive CLI's own live session credential
   (`~/.claude/.credentials.json`, which some other tools read directly) —
-  CodeWatch only ever holds a token the user explicitly minted for this
+  ClaudeWatch only ever holds a token the user explicitly minted for this
   purpose.
 - **Off by default, opt-in cadence when enabled**: clicking "Refresh Usage"
   is always available and is the only way this request fires by default. An
@@ -135,7 +135,7 @@ try/catch-style padding, inconsistent style, calls to APIs that don't
 actually exist ("imaginary API usage"), and comments that read like prompt
 output rather than engineering notes. This project is being built with
 Claude Code as the primary tool, which makes this the single most relevant
-review risk specific to CodeWatch — not a generic checklist item.
+review risk specific to ClaudeWatch — not a generic checklist item.
 
 Mitigations, concrete and ongoing (not a one-time pass before submission):
 
@@ -175,11 +175,11 @@ Mitigations, concrete and ongoing (not a one-time pass before submission):
 - [x] `enable()`/`disable()` audited for full symmetry (signals, sources,
       widgets, caches) — re-audited during the Phase 2 `extension/lib/`
       split: `enable()`'s file monitor is disconnected in `disable()`, and
-      `CodeWatchIndicator.destroy()` removes the pending flash timeout,
+      `ClaudeWatchIndicator.destroy()` removes the pending flash timeout,
       disconnects the menu's `open-state-changed` signal, and destroys the
       `PanelMenu.Button` (which takes its child widgets/menu items with
       it). Re-verify after any future change to `enable()`/`disable()` or
-      `CodeWatchIndicator`'s constructor/`destroy()`.
+      `ClaudeWatchIndicator`'s constructor/`destroy()`.
 - [x] No object/signal/source creation outside `enable()` — verified: no
       module-scope `new`/`Main.`/`Gio.`/`GLib.` calls anywhere under
       `extension/`, only constant and class/function definitions.
@@ -197,7 +197,7 @@ Mitigations, concrete and ongoing (not a one-time pass before submission):
       to just Node's builtins) — `hooks/hook-handler.js` only requires
       `fs`, `os`, `path`.
 - [ ] GC policy for stale session files verified (no unbounded growth in
-      `~/.local/state/codewatch/`) — not applicable yet: there's a single
+      `~/.local/state/claudewatch/`) — not applicable yet: there's a single
       global `state.json`, not per-session files, so nothing accumulates
       today, but there's also no GC logic to verify. Lands with the
       per-session rework.

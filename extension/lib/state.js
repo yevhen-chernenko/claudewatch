@@ -4,7 +4,7 @@ import GLib from "gi://GLib";
 
 export const STATE_PATH = GLib.build_filenamev([
   GLib.get_user_state_dir(),
-  "codewatch",
+  "claudewatch",
   "state.json",
 ]);
 

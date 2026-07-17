@@ -5,11 +5,11 @@ import * as Main from "resource:///org/gnome/shell/ui/main.js";
 import { Extension } from "resource:///org/gnome/shell/extensions/extension.js";
 
 import { STATE_PATH } from "./lib/state.js";
-import { CodeWatchIndicator } from "./lib/indicator.js";
+import { ClaudeWatchIndicator } from "./lib/indicator.js";
 
-export default class CodeWatchExtension extends Extension {
+export default class ClaudeWatchExtension extends Extension {
   enable() {
-    this._indicator = new CodeWatchIndicator(
+    this._indicator = new ClaudeWatchIndicator(
       this.uuid,
       this.metadata.name,
       this.path,

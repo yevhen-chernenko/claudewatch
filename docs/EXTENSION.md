@@ -11,7 +11,7 @@ activity, read from a JSON state file written by
 [hooks/hook-handler.js](../hooks/hook-handler.js):
 
 ```text
-${XDG_STATE_HOME:-~/.local/state}/codewatch/state.json
+${XDG_STATE_HOME:-~/.local/state}/claudewatch/state.json
 ```
 
 Four states: idle (**standby**, plain label — also where it lands 5s after a
@@ -47,7 +47,7 @@ extension/
 - `lib/rateLimit.js` — `TOKEN_PATH`, `RATE_LIMIT_URL`, and the pure
   formatting helpers (`formatResetTime`, `formatRateLimitWindow`) for the
   rate-limit check.
-- `lib/indicator.js` — `CodeWatchIndicator`, which owns the
+- `lib/indicator.js` — `ClaudeWatchIndicator`, which owns the
   `PanelMenu.Button`, the popup menu, the pulse/notify state machine, and
   the rate-limit HTTP fetch (the only place `Soup` is used).
 
@@ -79,7 +79,7 @@ See each file's own imports for the up-to-date list; briefly, by module:
 
 ## Lifecycle
 
-- **`enable()`** (`extension.js`) — constructs a `CodeWatchIndicator`
+- **`enable()`** (`extension.js`) — constructs a `ClaudeWatchIndicator`
   (`lib/indicator.js`), adds its `button` to the panel via
   `Main.panel.addToStatusArea`, starts a `Gio.FileMonitor` on the state file,
   and does one initial `_refresh()`. Everything created here is torn down in
@@ -90,7 +90,7 @@ See each file's own imports for the up-to-date list; briefly, by module:
   if the file doesn't exist yet or is mid-write (the hook handler writes
   atomically via `.tmp` + rename, but the file can still be briefly absent
   between mkdir and the first write).
-- **`CodeWatchIndicator.applyState()`** (`lib/indicator.js`) — stores the
+- **`ClaudeWatchIndicator.applyState()`** (`lib/indicator.js`) — stores the
   state, refreshes the local usage row, and runs it through
   `resolveUiAction()` to decide whether to transition the label (edge-
   triggered on `status` changes, not every file-monitor event — see the
@@ -105,7 +105,7 @@ See each file's own imports for the up-to-date list; briefly, by module:
 
 ## Popup menu
 
-Built in `CodeWatchIndicator`'s constructor (`lib/indicator.js`), top to
+Built in `ClaudeWatchIndicator`'s constructor (`lib/indicator.js`), top to
 bottom:
 
 - **Open in VS Code** (`PopupMenuItem`) — sensitive only once `this._state.cwd`
@@ -125,7 +125,7 @@ bottom:
     and every menu open — cheap since it's a local file read.
   - **5h** / **7d** (`_rateLimit5hItem`/`_rateLimit7dItem`) — the
     account-level rate-limit windows. Reads a bearer token from
-    `~/.config/codewatch/token` (created out of band via `claude
+    `~/.config/claudewatch/token` (created out of band via `claude
     setup-token`; the extension never writes this file) and GETs
     `api.anthropic.com/api/oauth/usage` — a dedicated usage-status endpoint,
     not a Messages completion, so it costs no API quota to check (same
@@ -161,7 +161,7 @@ bottom:
     token, or a failed request all resolve to an inline error string on
     this row instead of a silent failure.
 - **Exit** (`PopupMenuItem`) — removes the extension's uuid (passed into
-  `CodeWatchIndicator`'s constructor from `this.uuid` in `extension.js`) from
+  `ClaudeWatchIndicator`'s constructor from `this.uuid` in `extension.js`) from
   the `org.gnome.shell` `enabled-extensions` gsetting via `Gio.Settings`.
   This is the same mechanism the GNOME Extensions app and
   `gnome-extensions disable` use, so it persists (won't come back next
@@ -170,7 +170,7 @@ bottom:
 
 ## Setting up the Claude Usage token
 
-The "Claude Usage" row does nothing until `~/.config/codewatch/token`
+The "Claude Usage" row does nothing until `~/.config/claudewatch/token`
 exists — the extension deliberately never creates, writes, or prompts for
 this file itself (see
 [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check)).
@@ -190,9 +190,9 @@ privacy settings, unaffected by this).
 Save the printed token and lock the file down to your user only:
 
 ```sh
-mkdir -p ~/.config/codewatch
-echo 'PASTE_TOKEN_HERE' > ~/.config/codewatch/token
-chmod 600 ~/.config/codewatch/token
+mkdir -p ~/.config/claudewatch
+echo 'PASTE_TOKEN_HERE' > ~/.config/claudewatch/token
+chmod 600 ~/.config/claudewatch/token
 ```
 
 Then click "Refresh Usage" in the panel menu. First click after setup may

@@ -9,7 +9,7 @@ const path = require("path");
 
 const stateDir = path.join(
   process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"),
-  "codewatch",
+  "claudewatch",
 );
 const statePath = path.join(stateDir, "state.json");
 

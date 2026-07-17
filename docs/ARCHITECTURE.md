@@ -1,7 +1,7 @@
 # Architecture
 
 Status: planning draft for the per-session design below — this describes
-where CodeWatch is headed, not what's shipped. The current interim
+where ClaudeWatch is headed, not what's shipped. The current interim
 implementation (single global `state.json` rather than per-session files,
 no GC, no install flow) is documented in [EXTENSION.md](EXTENSION.md); see
 [ROADMAP.md](ROADMAP.md) for which pieces of this document are and aren't
@@ -9,7 +9,7 @@ built yet.
 
 ## Components
 
-CodeWatch has two independent halves that only agree on a file format. They
+ClaudeWatch has two independent halves that only agree on a file format. They
 are versioned, installed, and reviewed separately.
 
 1. **Hook handler** — a small script invoked by Claude Code itself, once per
@@ -36,7 +36,7 @@ Claude Code session
 hook handler (node, zero deps)
    │  atomic write
    ▼
-~/.local/state/codewatch/sessions/<session_id>.json
+~/.local/state/claudewatch/sessions/<session_id>.json
    │  Gio.FileMonitor (directory watch)
    ▼
 GNOME extension (indicator + popup menu)
@@ -49,7 +49,7 @@ the same file — each is written only by its own hook invocations, which are
 serial by construction (Claude Code doesn't fire two hooks for one session
 at once). This sidesteps file-locking entirely for v1.
 
-Path: `${XDG_STATE_HOME:-~/.local/state}/codewatch/sessions/<session_id>.json`
+Path: `${XDG_STATE_HOME:-~/.local/state}/claudewatch/sessions/<session_id>.json`
 
 Draft schema:
 
@@ -109,19 +109,19 @@ APIs), never sync I/O on the shell's main loop.
 
 ## Install flow
 
-Writing into `~/.claude/settings.json` is the one place CodeWatch touches a
+Writing into `~/.claude/settings.json` is the one place ClaudeWatch touches a
 file it doesn't own, so it needs to be explicit, reversible, and never
 automatic:
 
 1. User clicks "Enable Claude Code integration" in the extension's
    preferences (never triggered from `enable()` — must be a deliberate user
    action per GNOME review rules).
-2. CodeWatch reads the existing `settings.json` (if any), shows what it's
+2. ClaudeWatch reads the existing `settings.json` (if any), shows what it's
    about to add (the hook command entries), and writes a timestamped backup
    copy before touching the original.
 3. It merges its hook entries into the existing `hooks` object rather than
    overwriting the file — users likely already have other hooks configured.
-4. An "Uninstall" action reverses exactly the entries CodeWatch added,
+4. An "Uninstall" action reverses exactly the entries ClaudeWatch added,
    tracked by a marker (e.g. a comment-equivalent identifiable command path)
    so it doesn't remove hooks the user added themselves.
 
