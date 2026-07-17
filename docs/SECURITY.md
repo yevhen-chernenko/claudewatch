@@ -60,12 +60,13 @@ usage costs no API quota. Design constraints that keep this contained:
   purpose.
 - **Tied to real usage, not a timer**: it fires automatically once per Stop
   hook event (edge-triggered on the state file's `status` transitioning to
-  `"done"` — see `_refresh()` in `extension.js`), plus on manual click as an
-  override. There is no interval timer and no menu-open auto-refresh. Now
-  that the call costs no quota, this cadence is a network-disclosure
-  discipline choice (predictable, tied to real activity) rather than a
-  cost-avoidance one — revisit if a more frequent cadence turns out to be
-  worth the tradeoff.
+  `"done"` — see `_refresh()` in `extension.js`), plus on clicking the
+  "Refresh Usage" row as a manual override. There is no interval timer and
+  no menu-open auto-refresh (unlike the free local session-token summary
+  next to it, which does refresh on menu open). Now that the call costs no
+  quota, this cadence is a network-disclosure discipline choice
+  (predictable, tied to real activity) rather than a cost-avoidance one —
+  revisit if a more frequent cadence turns out to be worth the tradeoff.
 - **Single fixed endpoint**: only ever talks to
   `https://api.anthropic.com/api/oauth/usage`. No user-configurable host, so
   the token can't be exfiltrated to an arbitrary destination via config.

@@ -110,33 +110,18 @@ export default class CodeWatchExtension extends Extension {
     this._openInCodeItem.connect("activate", () => this._openInVsCode());
     this._indicator.menu.addMenuItem(this._openInCodeItem);
 
-    this._usageSwitch = new PopupMenu.PopupSwitchMenuItem("Show Usage", false);
-    // Default activate() chains to super.activate(), which PopupMenu treats
-    // as a close-triggering click; override so toggling never closes the menu.
-    this._usageSwitch.activate = () => this._usageSwitch.toggle();
-    this._usageSwitch.connect("toggled", (item, state) =>
-      this._onUsageToggled(state),
+    this._indicator.menu.addMenuItem(
+      new PopupMenu.PopupSeparatorMenuItem("Claude Usage"),
     );
-    this._indicator.menu.addMenuItem(this._usageSwitch);
 
     this._usageLabelItem = new PopupMenu.PopupMenuItem("", {
       reactive: false,
       can_focus: false,
     });
-    this._usageLabelItem.visible = false;
     this._indicator.menu.addMenuItem(this._usageLabelItem);
 
     this._httpSession = new Soup.Session();
     this._lastStatus = null;
-    this._rateLimitItem = new PopupMenu.PopupMenuItem(
-      "Claude Usage — click to refresh",
-    );
-    // Same close-on-click quirk as the switch above; keep the menu open so
-    // the result is visible without having to reopen it. Also auto-fires
-    // via the Stop-hook edge trigger in _refresh() below — this is a
-    // manual override on top of that, not the only way to refresh.
-    this._rateLimitItem.activate = () => this._refreshRateLimits();
-    this._indicator.menu.addMenuItem(this._rateLimitItem);
 
     this._rateLimit5hItem = new PopupMenu.PopupMenuItem("", {
       reactive: false,
@@ -152,6 +137,14 @@ export default class CodeWatchExtension extends Extension {
     this._rateLimit7dItem.visible = false;
     this._indicator.menu.addMenuItem(this._rateLimit7dItem);
 
+    this._refreshUsageItem = new PopupMenu.PopupMenuItem("Refresh Usage");
+    // Default activate() chains to super.activate(), which PopupMenu treats
+    // as a close-triggering click; override so clicking never closes the
+    // menu. This is a manual override on top of the automatic refreshes
+    // below — not the only way either row updates.
+    this._refreshUsageItem.activate = () => this._onRefreshUsageClicked();
+    this._indicator.menu.addMenuItem(this._refreshUsageItem);
+
     this._indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
     this._exitItem = new PopupMenu.PopupMenuItem("Exit");
@@ -161,7 +154,7 @@ export default class CodeWatchExtension extends Extension {
     this._menuOpenStateId = this._indicator.menu.connect(
       "open-state-changed",
       (menu, open) => {
-        if (open && this._usageSwitch.state) this._refreshUsage();
+        if (open) this._refreshUsage();
       },
     );
 
@@ -191,7 +184,7 @@ export default class CodeWatchExtension extends Extension {
       }
       this._label?.set_text(text);
       this._openInCodeItem?.setSensitive(!!this._state.cwd);
-      if (this._usageSwitch?.state) this._refreshUsage();
+      this._refreshUsage();
       // Edge-triggered on the transition into "done" (a real Stop hook
       // firing), not on every file-monitor event while status stays "done" —
       // see docs/SECURITY.md "Opt-in network egress".
@@ -215,15 +208,10 @@ export default class CodeWatchExtension extends Extension {
     }
   }
 
-  _onUsageToggled(state) {
-    this._usageLabelItem.visible = state;
-    if (state) this._refreshUsage();
-  }
-
   _refreshUsage() {
     const transcriptPath = this._state.transcript_path;
     if (!transcriptPath) {
-      this._usageLabelItem.label.set_text("No active session yet");
+      this._usageLabelItem.label.set_text("Session — no active session yet");
       return;
     }
 
@@ -233,18 +221,23 @@ export default class CodeWatchExtension extends Extension {
         let text;
         try {
           const [, contents] = file.load_contents_finish(result);
-          text = summarizeUsage(new TextDecoder().decode(contents));
+          text = `Session — ${summarizeUsage(new TextDecoder().decode(contents))}`;
         } catch (e) {
           // Transcript may be mid-write, same as the state file.
-          text = "Usage unavailable";
+          text = "Session — usage unavailable";
         }
         this._usageLabelItem?.label.set_text(text);
       },
     );
   }
 
+  _onRefreshUsageClicked() {
+    this._refreshUsage();
+    this._refreshRateLimits();
+  }
+
   _refreshRateLimits() {
-    this._rateLimitItem.label.set_text("Checking…");
+    this._refreshUsageItem.label.set_text("Checking…");
     this._rateLimit5hItem.visible = false;
     this._rateLimit7dItem.visible = false;
     Gio.File.new_for_path(TOKEN_PATH).load_contents_async(null, (file, result) => {
@@ -253,11 +246,11 @@ export default class CodeWatchExtension extends Extension {
         const [, contents] = file.load_contents_finish(result);
         token = new TextDecoder().decode(contents).trim();
       } catch (e) {
-        this._rateLimitItem?.label.set_text(`No token file at ${TOKEN_PATH}`);
+        this._refreshUsageItem?.label.set_text(`No token file at ${TOKEN_PATH}`);
         return;
       }
       if (!token) {
-        this._rateLimitItem?.label.set_text("Token file is empty");
+        this._refreshUsageItem?.label.set_text("Token file is empty");
         return;
       }
       this._probeRateLimits(token);
@@ -278,17 +271,31 @@ export default class CodeWatchExtension extends Extension {
         try {
           bytes = session.send_and_read_finish(result);
         } catch (e) {
-          this._rateLimitItem?.label.set_text(`Rate limit check failed — ${e.message}`);
+          this._refreshUsageItem?.label.set_text(`Rate limit check failed — ${e.message}`);
           return;
         }
-        const status = message.get_status();
-        const data = JSON.parse(new TextDecoder().decode(bytes.get_data()));
-        if (status < 200 || status >= 300 || data.type === "error") {
-          const detail = data.error?.message ?? `HTTP ${status}`;
-          this._rateLimitItem?.label.set_text(`Rate limit check failed — ${detail}`);
+        // Not message.get_status(): GJS throws when the raw HTTP status
+        // (e.g. 429) isn't one of libsoup's named Soup.Status enum values,
+        // which would abort this callback before any set_text() below runs
+        // and leave the row stuck on "Checking…" — status_code is the same
+        // guint without the enum marshaling.
+        const statusCode = message.status_code;
+        let data;
+        try {
+          data = JSON.parse(new TextDecoder().decode(bytes.get_data()));
+        } catch (e) {
+          data = null;
+        }
+        if (statusCode < 200 || statusCode >= 300) {
+          const detail = data?.error?.message ?? `HTTP ${statusCode}`;
+          this._refreshUsageItem?.label.set_text(`Rate limit check failed — ${detail}`);
           return;
         }
-        this._rateLimitItem?.label.set_text("Claude Usage — click to refresh");
+        if (!data) {
+          this._refreshUsageItem?.label.set_text("Rate limit check failed — bad response");
+          return;
+        }
+        this._refreshUsageItem?.label.set_text("Refresh Usage");
         this._rateLimit5hItem?.label.set_text(
           formatRateLimitWindow(data.five_hour, "5h"),
         );
@@ -319,11 +326,10 @@ export default class CodeWatchExtension extends Extension {
     this._indicator = null;
     this._label = null;
     this._openInCodeItem = null;
-    this._usageSwitch = null;
     this._usageLabelItem = null;
-    this._rateLimitItem = null;
     this._rateLimit5hItem = null;
     this._rateLimit7dItem = null;
+    this._refreshUsageItem = null;
     this._httpSession = null;
     this._lastStatus = null;
     this._exitItem = null;

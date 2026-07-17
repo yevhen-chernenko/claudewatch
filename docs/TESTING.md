@@ -61,30 +61,31 @@ EOF
   clickable once `cwd` is set; clicking opens VS Code at that directory.
   Temporarily rename `code` off PATH to confirm the "couldn't launch"
   notification appears instead of a silent failure.
-- **Show Usage** — toggling the switch on reveals a row below it with
-  token counts (`In … · Out … · Cached …`); toggling off hides it again.
-  Reopening the menu while it's on should refresh the numbers.
-- **Claude Usage** — needs a token file first; see
-  [EXTENSION.md](EXTENSION.md#setting-up-the-claude-usage-token) for how to
-  create `~/.config/codewatch/token` via `claude setup-token`.
-
-  Clicking the row should show "Checking…" then settle back to "Claude
-  Usage — click to refresh", revealing two rows below it — one like `5h
-  27% (resets in 1h 0m)`, the other like `7d 11% (resets Wed 2:00 AM)` —
-  without closing the menu. While a new check is in flight the two rows
-  should disappear rather than show stale numbers. Rename the token file
-  temporarily to confirm the "No token file at …" message appears on the
-  click row (with both sub-rows hidden) instead of a silent failure;
-  truncate it to an empty file to confirm "Token file is empty".
-
-  It should also auto-refresh once per real turn: run the "Drive the hook
-  handler directly" `Stop` event above (or finish a real prompt) while the
-  menu is open and confirm the two rows update on their own, without a
-  click. Fire `Stop` twice in a row without a `UserPromptSubmit` in between
-  and confirm it does **not** double-fire the check the second time (the
-  edge-trigger on `status` transitioning to `"done"` should only fire once
-  per transition) — watch for a second "Checking…" flash or check
-  `journalctl --user -f -o cat` for a second request.
+- **Claude Usage section** — a labeled separator followed by three
+  always-visible rows and a "Refresh Usage" button (no toggle — the section
+  is always shown).
+  - **Session** row — should show `Session — In … · Out … · Cached …` any
+    time `transcript_path` is set, with no manual action needed. Reopening
+    the menu, or firing either hook event, should refresh the numbers.
+  - **5h / 7d rows** — needs a token file first; see
+    [EXTENSION.md](EXTENSION.md#setting-up-the-claude-usage-token) for how
+    to create `~/.config/codewatch/token` via `claude setup-token`. They
+    stay hidden until a check succeeds, and re-hide while a new check is in
+    flight rather than showing stale numbers. They should auto-refresh once
+    per real turn: run the "Drive the hook handler directly" `Stop` event
+    above (or finish a real prompt) while the menu is open and confirm they
+    update on their own. Fire `Stop` twice in a row without a
+    `UserPromptSubmit` in between and confirm it does **not** double-fire
+    the check the second time (the edge-trigger on `status` transitioning
+    to `"done"` should only fire once per transition) — watch for a second
+    "Checking…" flash on the Refresh Usage row, or check
+    `journalctl --user -f -o cat` for a second request.
+  - **Refresh Usage** button — clicking it should refresh both the Session
+    row and the 5h/7d rows without closing the menu, showing "Checking…"
+    while the rate-limit request is in flight. Rename the token file
+    temporarily to confirm the "No token file at …" message appears on
+    this row (with both 5h/7d rows hidden) instead of a silent failure;
+    truncate it to an empty file to confirm "Token file is empty".
 - **Exit** — clicking it should remove the indicator from the panel
   immediately and it should not reappear on the next login (it's gone from
   `dconf read /org/gnome/shell/enabled-extensions`) until re-enabled via

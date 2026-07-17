@@ -13,14 +13,17 @@ The indicator's popup menu (`extension.js`) now has three rows:
   from the hook JSON payload and writes into `state.json`. Insensitive until
   a `cwd` is known. If `code` isn't on PATH, `Gio.Subprocess.new` throws and
   the handler shows a `Main.notify` toast rather than failing silently.
-- **Show Usage** — a `PopupMenu.PopupSwitchMenuItem`. Data source turned out
-  to be local after all: every hook payload includes `transcript_path`,
-  pointing at the session's JSONL transcript, and each `assistant` entry in
-  it already carries a `message.usage` block (input/output/cache token
-  counts) — no CLI subcommand and no network call needed, so the "no network
-  calls in v1" principle holds. Refresh is menu-open-triggered, matching the
-  cadence guess below. Note the transcript repeats a message id once per
-  content block, so the summarizer dedupes by `message.id` before summing.
+- **Show Usage** — originally a `PopupMenu.PopupSwitchMenuItem` gating a
+  hidden summary row; later removed in favor of an always-visible "Session"
+  row (see the rate-limit section below — the two were merged under one
+  "Claude Usage" section heading). Data source turned out to be local after
+  all: every hook payload includes `transcript_path`, pointing at the
+  session's JSONL transcript, and each `assistant` entry in it already
+  carries a `message.usage` block (input/output/cache token counts) — no
+  CLI subcommand and no network call needed, so the "no network calls in
+  v1" principle holds. Refresh is menu-open- and hook-triggered. Note the
+  transcript repeats a message id once per content block, so the summarizer
+  dedupes by `message.id` before summing.
 - **Exit** — removes the extension's uuid from the `org.gnome.shell`
   `enabled-extensions` gsetting (the same mechanism the Extensions app and
   `gnome-extensions disable` use), which persists and lets the shell's own
@@ -32,7 +35,8 @@ fired a hook, same limitation already true of `status`.
 
 ## Done: Claude Usage rate-limit row (opt-in network call)
 
-Added a fourth popup menu row, "Claude Usage", that reads the account-level
+Added a fourth popup menu row, originally titled "Claude Usage", that reads
+the account-level
 5-hour/7-day rate-limit windows (the same numbers the CLI's own TUI shows).
 There's no local file or documented `claude` subcommand that exposes this
 data — confirmed by checking `claude auth status`, `doctor`, `agents`,
@@ -55,3 +59,10 @@ background timer — see
 [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check) for
 the full reasoning and why the "no network calls" hardening checklist item
 was updated rather than silently violated.
+
+Later merged with the Show Usage row above under one "Claude Usage" section
+heading (a labeled `PopupSeparatorMenuItem`), with the Show Usage toggle
+removed — both rows are always visible now, and a single "Refresh Usage"
+button replaced the old click-target row as the manual-override trigger for
+both. See [EXTENSION.md](EXTENSION.md#popup-menu) for the current
+structure.

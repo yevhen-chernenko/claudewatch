@@ -64,48 +64,54 @@ aren't produced yet — that lands with Phase 2's per-session rework.
 
 ## Popup menu
 
-Four rows, added in `enable()`:
+Built in `enable()`, top to bottom:
 
 - **Open in VS Code** (`PopupMenuItem`) — sensitive only once `this._state.cwd`
   is known; `activate` spawns `Gio.Subprocess.new(["code", cwd], …)`. A
   thrown `GLib.Error` (e.g. `code` missing from PATH) is caught and surfaced
   via `Main.notify` instead of failing silently.
-- **Show Usage** (`PopupSwitchMenuItem`) + a read-only summary row below it
-  (`PopupMenuItem` with `reactive: false`, hidden while the switch is off).
-  Toggling on, or opening the menu while already on, calls `_refreshUsage()`,
-  which reads `this._state.transcript_path` async and hands the contents to
-  `summarizeUsage()` — a module-level pure function that dedupes by
-  `message.id` (the transcript repeats a message once per content block) and
-  sums `input_tokens`/`output_tokens`/cache token fields from each
-  `assistant` entry's `message.usage`.
-- **Claude Usage** (`PopupMenuItem`) — auto-refreshes once per real turn,
-  plus click for a manual refresh. `_refresh()` edge-triggers
-  `_refreshRateLimits()` when `this._state.status` transitions to `"done"`
-  (a Stop hook firing), tracked via `this._lastStatus` so it doesn't re-fire
-  on every file-monitor event while status stays `"done"` or on menu
-  reopen. Reads a bearer token from `~/.config/codewatch/token` (created out
-  of band via `claude setup-token`; the extension never writes this file)
-  and GETs `api.anthropic.com/api/oauth/usage` — a dedicated usage-status
-  endpoint, not a Messages completion, so it costs no API quota to check
-  (same endpoint the popular "Claude Code Usage Tracker" VS Code extension
-  uses). There's no local file or documented CLI command that exposes this
-  directly. `formatRateLimitWindow()` turns each window's
-  `utilization`/`resets_at` JSON response fields into its own row's text
-  (`5h 27% (resets in 1h 0m)`, `7d 11% (resets Wed 2:00 AM)`), shown on the
-  two read-only rows below the click target
-  (`_rateLimit5hItem`/`_rateLimit7dItem`, same `reactive: false` pattern as
-  the Show Usage summary row). A window missing from the response renders as
-  `5h: unavailable` rather than hiding the row, so a partial response is
-  still visibly a partial response. Both
-  rows stay hidden until a check succeeds, and re-hide while a new check is
-  in flight, so stale numbers are never shown as current. Missing token
-  file, empty token, or a failed request all resolve to an inline error
-  string on the click-target row instead — see
-  [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check) for
-  why this stays opt-in (gated on the token file existing) and tied to real
-  Stop events rather than a background timer, and
-  ["Setting up the Claude Usage token"](#setting-up-the-claude-usage-token)
-  below for how to actually get it working.
+- **"Claude Usage" section** — a labeled `PopupSeparatorMenuItem` heading
+  three always-visible rows plus a refresh button, all `reactive: false`
+  except the button:
+  - **Session** (`_usageLabelItem`) — local token counts for the current
+    session (`Session — In … · Out … · Cached …`), no network involved.
+    Reads `this._state.transcript_path` async and hands the contents to
+    `summarizeUsage()` — a module-level pure function that dedupes by
+    `message.id` (the transcript repeats a message once per content block)
+    and sums `input_tokens`/`output_tokens`/cache token fields from each
+    `assistant` entry's `message.usage`. Refreshes on every state-file change
+    and every menu open — cheap since it's a local file read.
+  - **5h** / **7d** (`_rateLimit5hItem`/`_rateLimit7dItem`) — the
+    account-level rate-limit windows. Reads a bearer token from
+    `~/.config/codewatch/token` (created out of band via `claude
+    setup-token`; the extension never writes this file) and GETs
+    `api.anthropic.com/api/oauth/usage` — a dedicated usage-status endpoint,
+    not a Messages completion, so it costs no API quota to check (same
+    endpoint the popular "Claude Code Usage Tracker" VS Code extension
+    uses). There's no local file or documented CLI command that exposes
+    this directly. `formatRateLimitWindow()` turns each window's
+    `utilization`/`resets_at` JSON response fields into its own row's text
+    (`5h 27% (resets in 1h 0m)`, `7d 11% (resets Wed 2:00 AM)`). A window
+    missing from the response renders as `5h: unavailable` rather than
+    hiding the row, so a partial response is still visibly a partial
+    response. Both rows stay hidden until a check succeeds, and re-hide
+    while a new check is in flight, so stale numbers are never shown as
+    current. `_refresh()` edge-triggers `_refreshRateLimits()` when
+    `this._state.status` transitions to `"done"` (a Stop hook firing),
+    tracked via `this._lastStatus` so it doesn't re-fire on every
+    file-monitor event while status stays `"done"` or on menu reopen — see
+    [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check)
+    for why this stays opt-in (gated on the token file existing) rather
+    than unconditional, and
+    ["Setting up the Claude Usage token"](#setting-up-the-claude-usage-token)
+    below for how to actually get it working.
+  - **Refresh Usage** (`_refreshUsageItem`, `PopupMenuItem`) — manual
+    override on top of the automatic refreshes above; `activate` calls both
+    `_refreshUsage()` and `_refreshRateLimits()`. Also doubles as the status
+    display for the rate-limit check specifically — its label reads
+    "Checking…" while a request is in flight, and missing token file, empty
+    token, or a failed request all resolve to an inline error string on
+    this row instead of a silent failure.
 - **Exit** (`PopupMenuItem`) — removes the extension's uuid from the
   `org.gnome.shell` `enabled-extensions` gsetting via `Gio.Settings`. This is
   the same mechanism the GNOME Extensions app and `gnome-extensions disable`
