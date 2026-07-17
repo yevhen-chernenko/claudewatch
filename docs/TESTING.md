@@ -23,10 +23,12 @@ echo '{"hook_event_name":"UserPromptSubmit"}' | node hooks/hook-handler.js
 # panel -> "Claude is working…" (orange, pulsing)
 
 echo '{"hook_event_name":"Notification"}' | node hooks/hook-handler.js
-# panel -> "Claude Wants Something!" (blue, pulsing twice as fast)
+# panel -> "Claude wants something!" (blue, pulsing twice as fast)
+# also fires a desktop notification (Main.notify) in the notification center
 
 echo '{"hook_event_name":"Stop"}' | node hooks/hook-handler.js
-# panel -> "Task complete!" (green flash, then standby after 5s)
+# panel -> "Claude is done!" (green flash, then standby after 5s)
+# also fires a desktop notification
 ```
 
 Inspect the state file directly if the panel doesn't move:

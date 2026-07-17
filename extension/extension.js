@@ -35,7 +35,7 @@ const RATE_LIMIT_URL = "https://api.anthropic.com/api/oauth/usage";
 // task paused on a permission prompt or question ("waiting", pulsing blue at
 // twice the running rate so it reads as more urgent), and the 5s green flash
 // right after a task finishes ("complete").
-const STANDBY_TEXT = "Claude is resting.";
+const STANDBY_TEXT = "Claude is resting...";
 const RUNNING_TEXT = "Claude is working…";
 const WAITING_TEXT = "Claude wants something!";
 const COMPLETE_TEXT = "Claude is done!";
@@ -311,6 +311,8 @@ export default class CodeWatchExtension extends Extension {
   // Paused-on-prompt state: Claude stopped to ask for a permission or a
   // question and is waiting on the user. Same pulse as _enterRunning() but
   // blue and twice as fast, so it reads as more urgent than plain progress.
+  // Also fires a desktop notification since the panel alone is easy to miss
+  // while Claude is genuinely blocked on the user.
   _enterWaiting() {
     this._uiState = "waiting";
     if (this._flashTimeoutId) {
@@ -323,6 +325,7 @@ export default class CodeWatchExtension extends Extension {
     this._label.opacity = 255;
     this._pulseDim = false;
     this._pulseLoop();
+    Main.notify("CodeWatch", WAITING_TEXT);
   }
 
   _pulseLoop() {
@@ -341,7 +344,8 @@ export default class CodeWatchExtension extends Extension {
   }
 
   // Just-finished state: flashes the label green for COMPLETE_FLASH_MS,
-  // then falls back to standby on its own.
+  // then falls back to standby on its own. Also fires a desktop notification
+  // for the same reason as _enterWaiting() — easy to miss the panel alone.
   _enterComplete() {
     this._uiState = "complete";
     this._label?.remove_all_transitions();
@@ -353,6 +357,7 @@ export default class CodeWatchExtension extends Extension {
     this._label.opacity = 255;
     this._label.style = COMPLETE_STYLE;
     this._label.set_text(COMPLETE_TEXT);
+    Main.notify("CodeWatch", COMPLETE_TEXT);
     this._flashTimeoutId = GLib.timeout_add(
       GLib.PRIORITY_DEFAULT,
       COMPLETE_FLASH_MS,
