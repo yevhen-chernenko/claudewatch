@@ -105,6 +105,10 @@ export default class CodeWatchExtension extends Extension {
     });
     this._indicator.add_child(this._label);
 
+    // Fixed width so the menu doesn't reflow as row text changes length
+    // (e.g. "Checking…" vs. a long rate-limit error string).
+    this._indicator.menu.box.style = "width: 500px; min-width: 500px; max-width: 500px;";
+
     this._openInCodeItem = new PopupMenu.PopupMenuItem("Open in VS Code");
     this._openInCodeItem.setSensitive(false);
     this._openInCodeItem.connect("activate", () => this._openInVsCode());
