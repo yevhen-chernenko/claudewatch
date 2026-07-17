@@ -4,9 +4,11 @@ import St from "gi://St";
 import GLib from "gi://GLib";
 import Gio from "gi://Gio";
 import Clutter from "gi://Clutter";
+import Soup from "gi://Soup?version=3.0";
 import { Extension } from "resource:///org/gnome/shell/extensions/extension.js";
 import * as Main from "resource:///org/gnome/shell/ui/main.js";
 import * as PanelMenu from "resource:///org/gnome/shell/ui/panelMenu.js";
+import * as PopupMenu from "resource:///org/gnome/shell/ui/popupMenu.js";
 
 const STATE_PATH = GLib.build_filenamev([
   GLib.get_user_state_dir(),
@@ -14,19 +16,153 @@ const STATE_PATH = GLib.build_filenamev([
   "state.json",
 ]);
 
+// See docs/SECURITY.md "Opt-in network egress" — this file is user-created
+// (`claude setup-token`), never written by the extension, and its presence
+// is what makes the rate-limit check opt-in rather than automatic.
+const TOKEN_PATH = GLib.build_filenamev([
+  GLib.get_user_config_dir(),
+  "codewatch",
+  "token",
+]);
+
+const RATE_LIMIT_URL = "https://api.anthropic.com/v1/messages";
+// Only used to trigger a response carrying rate-limit headers; the actual
+// completion is discarded, so the model choice doesn't matter beyond being
+// valid and cheap.
+const RATE_LIMIT_MODEL = "claude-haiku-4-5-20251001";
+
 const STATUS_TEXT = {
   running: "Task is running…",
   done: "Task complete!",
 };
 
+function formatTokenCount(n) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return `${n}`;
+}
+
+// Transcript JSONL repeats the same message id once per content block
+// (text, tool_use, …), each carrying that turn's cumulative usage — dedupe
+// by id or totals balloon by however many blocks the turn happened to have.
+function summarizeUsage(transcriptText) {
+  const seenIds = new Set();
+  let input = 0;
+  let output = 0;
+  let cached = 0;
+
+  for (const line of transcriptText.split("\n")) {
+    if (!line) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch (e) {
+      continue;
+    }
+    const usage = entry.message?.usage;
+    const id = entry.message?.id;
+    if (!usage || !id || seenIds.has(id)) continue;
+    seenIds.add(id);
+    input += usage.input_tokens ?? 0;
+    output += usage.output_tokens ?? 0;
+    cached +=
+      (usage.cache_read_input_tokens ?? 0) +
+      (usage.cache_creation_input_tokens ?? 0);
+  }
+
+  return `In ${formatTokenCount(input)} · Out ${formatTokenCount(output)} · Cached ${formatTokenCount(cached)}`;
+}
+
+function formatResetTime(unixSeconds) {
+  const reset = GLib.DateTime.new_from_unix_local(unixSeconds);
+  const hoursUntil = reset.difference(GLib.DateTime.new_now_local()) / 3_600_000_000;
+  if (hoursUntil < 24) {
+    const minutesUntil = Math.max(0, Math.round(hoursUntil * 60));
+    return `in ${Math.floor(minutesUntil / 60)}h ${minutesUntil % 60}m`;
+  }
+  return reset.format("%a %l:%M %p").trim();
+}
+
+// anthropic-ratelimit-unified-* headers: utilization is a 0..1 fraction,
+// reset is a unix timestamp in seconds. A window's pair can be absent if the
+// account has no active usage in it yet.
+function formatRateLimitWindow(headers, prefix, label) {
+  const utilization = headers.get_one(`${prefix}-utilization`);
+  if (utilization == null) return `${label}: unavailable`;
+  const reset = headers.get_one(`${prefix}-reset`);
+  const percent = Math.round(Number.parseFloat(utilization) * 100);
+  const resetText = reset ? ` (resets ${formatResetTime(Number.parseInt(reset, 10))})` : "";
+  return `${label} ${percent}%${resetText}`;
+}
+
 export default class CodeWatchExtension extends Extension {
   enable() {
+    this._state = {};
+
     this._indicator = new PanelMenu.Button(0.0, this.metadata.name, false);
     this._label = new St.Label({
       text: "CodeWatch",
       y_align: Clutter.ActorAlign.CENTER,
     });
     this._indicator.add_child(this._label);
+
+    this._openInCodeItem = new PopupMenu.PopupMenuItem("Open in VS Code");
+    this._openInCodeItem.setSensitive(false);
+    this._openInCodeItem.connect("activate", () => this._openInVsCode());
+    this._indicator.menu.addMenuItem(this._openInCodeItem);
+
+    this._usageSwitch = new PopupMenu.PopupSwitchMenuItem("Show Usage", false);
+    // Default activate() chains to super.activate(), which PopupMenu treats
+    // as a close-triggering click; override so toggling never closes the menu.
+    this._usageSwitch.activate = () => this._usageSwitch.toggle();
+    this._usageSwitch.connect("toggled", (item, state) =>
+      this._onUsageToggled(state),
+    );
+    this._indicator.menu.addMenuItem(this._usageSwitch);
+
+    this._usageLabelItem = new PopupMenu.PopupMenuItem("", {
+      reactive: false,
+      can_focus: false,
+    });
+    this._usageLabelItem.visible = false;
+    this._indicator.menu.addMenuItem(this._usageLabelItem);
+
+    this._httpSession = new Soup.Session();
+    this._rateLimitItem = new PopupMenu.PopupMenuItem(
+      "Claude Usage — click to check",
+    );
+    // Same close-on-click quirk as the switch above; keep the menu open so
+    // the result is visible without having to reopen it.
+    this._rateLimitItem.activate = () => this._refreshRateLimits();
+    this._indicator.menu.addMenuItem(this._rateLimitItem);
+
+    this._rateLimit5hItem = new PopupMenu.PopupMenuItem("", {
+      reactive: false,
+      can_focus: false,
+    });
+    this._rateLimit5hItem.visible = false;
+    this._indicator.menu.addMenuItem(this._rateLimit5hItem);
+
+    this._rateLimit7dItem = new PopupMenu.PopupMenuItem("", {
+      reactive: false,
+      can_focus: false,
+    });
+    this._rateLimit7dItem.visible = false;
+    this._indicator.menu.addMenuItem(this._rateLimit7dItem);
+
+    this._indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+    this._exitItem = new PopupMenu.PopupMenuItem("Exit");
+    this._exitItem.connect("activate", () => this._onExit());
+    this._indicator.menu.addMenuItem(this._exitItem);
+
+    this._menuOpenStateId = this._indicator.menu.connect(
+      "open-state-changed",
+      (menu, open) => {
+        if (open && this._usageSwitch.state) this._refreshUsage();
+      },
+    );
+
     Main.panel.addToStatusArea(this.uuid, this._indicator);
 
     this._stateFile = Gio.File.new_for_path(STATE_PATH);
@@ -44,22 +180,149 @@ export default class CodeWatchExtension extends Extension {
       let text;
       try {
         const [, contents] = file.load_contents_finish(result);
-        const state = JSON.parse(new TextDecoder().decode(contents));
-        text = STATUS_TEXT[state.status] ?? "CodeWatch";
+        this._state = JSON.parse(new TextDecoder().decode(contents));
+        text = STATUS_TEXT[this._state.status] ?? "CodeWatch";
       } catch (e) {
         // No state file yet, or it's mid-write.
+        this._state = {};
         text = "CodeWatch";
       }
       this._label?.set_text(text);
+      this._openInCodeItem?.setSensitive(!!this._state.cwd);
+      if (this._usageSwitch?.state) this._refreshUsage();
     });
+  }
+
+  _openInVsCode() {
+    const cwd = this._state.cwd;
+    if (!cwd) return;
+    try {
+      Gio.Subprocess.new(["code", cwd], Gio.SubprocessFlags.NONE);
+    } catch (e) {
+      Main.notify(
+        "CodeWatch",
+        "Couldn't launch VS Code — is `code` on your PATH?",
+      );
+    }
+  }
+
+  _onUsageToggled(state) {
+    this._usageLabelItem.visible = state;
+    if (state) this._refreshUsage();
+  }
+
+  _refreshUsage() {
+    const transcriptPath = this._state.transcript_path;
+    if (!transcriptPath) {
+      this._usageLabelItem.label.set_text("No active session yet");
+      return;
+    }
+
+    Gio.File.new_for_path(transcriptPath).load_contents_async(
+      null,
+      (file, result) => {
+        let text;
+        try {
+          const [, contents] = file.load_contents_finish(result);
+          text = summarizeUsage(new TextDecoder().decode(contents));
+        } catch (e) {
+          // Transcript may be mid-write, same as the state file.
+          text = "Usage unavailable";
+        }
+        this._usageLabelItem?.label.set_text(text);
+      },
+    );
+  }
+
+  _refreshRateLimits() {
+    this._rateLimitItem.label.set_text("Checking…");
+    this._rateLimit5hItem.visible = false;
+    this._rateLimit7dItem.visible = false;
+    Gio.File.new_for_path(TOKEN_PATH).load_contents_async(null, (file, result) => {
+      let token;
+      try {
+        const [, contents] = file.load_contents_finish(result);
+        token = new TextDecoder().decode(contents).trim();
+      } catch (e) {
+        this._rateLimitItem?.label.set_text(`No token file at ${TOKEN_PATH}`);
+        return;
+      }
+      if (!token) {
+        this._rateLimitItem?.label.set_text("Token file is empty");
+        return;
+      }
+      this._probeRateLimits(token);
+    });
+  }
+
+  _probeRateLimits(token) {
+    const message = Soup.Message.new("POST", RATE_LIMIT_URL);
+    message.request_headers.append("anthropic-version", "2023-06-01");
+    message.request_headers.append("anthropic-beta", "oauth-2025-04-20");
+    message.request_headers.append("authorization", `Bearer ${token}`);
+    message.set_request_body_from_bytes(
+      "application/json",
+      GLib.Bytes.new(
+        new TextEncoder().encode(
+          JSON.stringify({
+            model: RATE_LIMIT_MODEL,
+            max_tokens: 1,
+            messages: [{ role: "user", content: "." }],
+          }),
+        ),
+      ),
+    );
+
+    this._httpSession.send_and_read_async(
+      message,
+      GLib.PRIORITY_DEFAULT,
+      null,
+      (session, result) => {
+        try {
+          session.send_and_read_finish(result);
+        } catch (e) {
+          this._rateLimitItem?.label.set_text(`Rate limit check failed — ${e.message}`);
+          return;
+        }
+        const headers = message.get_response_headers();
+        this._rateLimitItem?.label.set_text("Claude Usage — click to refresh");
+        this._rateLimit5hItem?.label.set_text(
+          formatRateLimitWindow(headers, "anthropic-ratelimit-unified-5h", "5h"),
+        );
+        this._rateLimit7dItem?.label.set_text(
+          formatRateLimitWindow(headers, "anthropic-ratelimit-unified-7d", "7d"),
+        );
+        if (this._rateLimit5hItem) this._rateLimit5hItem.visible = true;
+        if (this._rateLimit7dItem) this._rateLimit7dItem.visible = true;
+      },
+    );
+  }
+
+  _onExit() {
+    const settings = new Gio.Settings({ schema_id: "org.gnome.shell" });
+    const enabled = settings.get_strv("enabled-extensions");
+    const index = enabled.indexOf(this.uuid);
+    if (index === -1) return;
+    enabled.splice(index, 1);
+    settings.set_strv("enabled-extensions", enabled);
   }
 
   disable() {
     this._monitor?.disconnect(this._monitorId);
     this._monitor = null;
     this._stateFile = null;
+    this._indicator?.menu.disconnect(this._menuOpenStateId);
     this._indicator?.destroy();
     this._indicator = null;
     this._label = null;
+    this._openInCodeItem = null;
+    this._usageSwitch = null;
+    this._usageLabelItem = null;
+    this._rateLimitItem = null;
+    this._rateLimit5hItem = null;
+    this._rateLimit7dItem = null;
+    this._httpSession = null;
+    this._exitItem = null;
+    this._state = null;
   }
 }

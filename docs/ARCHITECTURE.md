@@ -24,7 +24,7 @@ between runs, nothing for the extension to spawn. If per-event file I/O
 turns out to be too slow or too coarse (see [Open questions](#open-questions)),
 a daemon + IPC socket is the fallback design for v2, not the v1 starting point.
 
-```
+```text
 Claude Code session
    │  (hook event, JSON on stdin)
    ▼
@@ -136,7 +136,7 @@ section above.
 - **Exact hook event set for v1**: `SessionStart`, `PreToolUse`, `PostToolUse`,
   `Notification`, `Stop` per the brief. Verify `SessionEnd` semantics and any
   newer/renamed events against the live hooks reference
-  (https://code.claude.com/docs/en/hooks) at implementation time — the event
+  ([hooks reference](https://code.claude.com/docs/en/hooks)) at implementation time — the event
   list has changed since this doc was written.
 - **Multi-session aggregate icon rules**: priority order proposed above;
   needs a quick usability pass once the panel exists.

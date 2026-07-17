@@ -26,7 +26,12 @@ if (status) {
   const tmpPath = `${statePath}.tmp`;
   fs.writeFileSync(
     tmpPath,
-    JSON.stringify({ status, updated_at: new Date().toISOString() }),
+    JSON.stringify({
+      status,
+      updated_at: new Date().toISOString(),
+      cwd: input.cwd,
+      transcript_path: input.transcript_path,
+    }),
   );
   fs.renameSync(tmpPath, statePath);
 }

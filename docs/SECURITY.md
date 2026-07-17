@@ -7,9 +7,10 @@ the architecture changes.
 ## Threat model
 
 CodeWatch is a single-user, local-only desktop tool. There is no server
-component and, by design, no network egress at all in v1 — everything it
-reads and writes stays on the local filesystem. The relevant trust
-boundaries are:
+component, and the default posture is no network egress — everything it
+reads and writes stays on the local filesystem. The one deliberate exception
+is the "Claude Usage" rate-limit check; see "Opt-in network egress" below.
+The relevant trust boundaries are:
 
 - **Claude Code hook payloads → hook handler**: payloads can contain tool
   inputs (shell commands, file paths, file contents pasted into `Edit`
@@ -34,9 +35,37 @@ boundaries are:
   backup-before-write, merge not overwrite, reversible uninstall.
 
 No telemetry, no analytics, no update-check pings, no crash reporting to a
-remote endpoint. If that ever changes, it needs to be opt-in, disclosed in
-the extensions.gnome.org listing, and probably its own ADR — don't add it
-casually.
+remote endpoint.
+
+### Opt-in network egress: the rate-limit check
+
+"Claude Usage" (`extension.js`, `_refreshRateLimits`/`_probeRateLimits`) is
+the one feature that leaves the machine. It exists only because Anthropic
+doesn't expose 5-hour/7-day rate-limit utilization through any local file or
+documented CLI command — the only way to read it is off the
+`anthropic-ratelimit-unified-*` response headers of a real Messages API
+call. Design constraints that keep this contained:
+
+- **Opt-in by construction, not a setting**: the check does nothing unless
+  `~/.config/codewatch/token` exists. The extension never creates, writes,
+  or discovers this file itself — the user creates it manually by running
+  `claude setup-token` and saving the output there (`chmod 600`). No file,
+  no network call, ever.
+- **User-triggered, not polled**: it only fires when the "Claude Usage" row
+  is clicked. No timer, no menu-open auto-refresh — unlike the free local
+  `summarizeUsage()` check, each click spends a sliver of real API quota
+  (`max_tokens: 1`), so it must never fire silently.
+- **Single fixed endpoint**: only ever talks to
+  `https://api.anthropic.com/v1/messages`. No user-configurable host, so
+  the token can't be exfiltrated to an arbitrary destination via config.
+- **Token never touches state.json or any file the extension writes** — it
+  is read from `TOKEN_PATH` and held only in memory for the life of one
+  request.
+
+If EGO review flags this, the mitigation is to ship it disabled by default
+or split it into a separate optional extension — not to widen scope here
+casually. This whole section exists so that exception is disclosed, not
+silently reintroduced.
 
 ## GNOME Shell extension review guidelines (EGO)
 
@@ -127,7 +156,9 @@ Mitigations, concrete and ongoing (not a one-time pass before submission):
 - [ ] No object/signal/source creation outside `enable()`
 - [ ] `settings.json` writes: explicit user action, backup taken first,
       merge (not overwrite), reversible uninstall
-- [ ] No network calls anywhere in the extension or hook handler
+- [ ] No network calls except the opt-in, user-triggered "Claude Usage"
+      rate-limit check (see "Opt-in network egress" above) — everything
+      else in the extension and hook handler stays local-only
 - [ ] No telemetry/analytics
 - [ ] Hook handler has zero npm dependencies (reduces supply-chain surface
       to just Node's builtins)
