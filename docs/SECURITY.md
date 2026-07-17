@@ -58,15 +58,18 @@ usage costs no API quota. Design constraints that keep this contained:
   (`~/.claude/.credentials.json`, which some other tools read directly) —
   CodeWatch only ever holds a token the user explicitly minted for this
   purpose.
-- **Tied to real usage, not a timer**: it fires automatically once per Stop
-  hook event (edge-triggered on the state file's `status` transitioning to
-  `"done"` — see `_refresh()` in `extension.js`), plus on clicking the
-  "Refresh Usage" row as a manual override. There is no interval timer and
-  no menu-open auto-refresh (unlike the free local session-token summary
-  next to it, which does refresh on menu open). Now that the call costs no
-  quota, this cadence is a network-disclosure discipline choice
-  (predictable, tied to real activity) rather than a cost-avoidance one —
-  revisit if a more frequent cadence turns out to be worth the tradeoff.
+- **Off by default, opt-in cadence when enabled**: clicking "Refresh Usage"
+  is always available and is the only way this request fires by default. An
+  "Auto-refresh on task complete" switch (`_autoRefreshItem`, unchecked on
+  every `enable()`) lets the user opt into an automatic check as well; when
+  on, it fires once per Stop hook event (edge-triggered on the state file's
+  `status` transitioning to `"done"` — see `_refresh()` in `extension.js`).
+  There is no interval timer and no menu-open auto-refresh either way
+  (unlike the free local session-token summary next to it, which does
+  refresh on menu open). The toggle state lives only in memory
+  (`this._autoRefreshOnDone`), not in a GSettings key, so it resets to off
+  on every shell reload/session start rather than silently persisting an
+  opt-in across sessions.
 - **Single fixed endpoint**: only ever talks to
   `https://api.anthropic.com/api/oauth/usage`. No user-configurable host, so
   the token can't be exfiltrated to an arbitrary destination via config.

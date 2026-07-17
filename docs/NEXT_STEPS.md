@@ -66,3 +66,8 @@ removed — both rows are always visible now, and a single "Refresh Usage"
 button replaced the old click-target row as the manual-override trigger for
 both. See [EXTENSION.md](EXTENSION.md#popup-menu) for the current
 structure.
+
+Further reduced request volume with an "Auto-refresh on task complete"
+switch, off by default — a manual "Refresh Usage" click is now the only
+trigger unless the user opts in. State is in-memory only, so it resets to
+off on every shell reload.

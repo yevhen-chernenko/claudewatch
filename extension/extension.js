@@ -74,7 +74,8 @@ function summarizeUsage(transcriptText) {
 
 function formatResetTime(isoString) {
   const reset = GLib.DateTime.new_from_iso8601(isoString, null);
-  const hoursUntil = reset.difference(GLib.DateTime.new_now_local()) / 3_600_000_000;
+  const hoursUntil =
+    reset.difference(GLib.DateTime.new_now_local()) / 3_600_000_000;
   if (hoursUntil < 24) {
     const minutesUntil = Math.max(0, Math.round(hoursUntil * 60));
     return `in ${Math.floor(minutesUntil / 60)}h ${minutesUntil % 60}m`;
@@ -107,7 +108,8 @@ export default class CodeWatchExtension extends Extension {
 
     // Fixed width so the menu doesn't reflow as row text changes length
     // (e.g. "Checking…" vs. a long rate-limit error string).
-    this._indicator.menu.box.style = "width: 500px; min-width: 500px; max-width: 500px;";
+    this._indicator.menu.box.style =
+      "width: 300px; min-width: 300px; max-width: 300px;";
 
     this._openInCodeItem = new PopupMenu.PopupMenuItem("Open in VS Code");
     this._openInCodeItem.setSensitive(false);
@@ -126,6 +128,7 @@ export default class CodeWatchExtension extends Extension {
 
     this._httpSession = new Soup.Session();
     this._lastStatus = null;
+    this._autoRefreshOnDone = false;
 
     this._rateLimit5hItem = new PopupMenu.PopupMenuItem("", {
       reactive: false,
@@ -140,6 +143,15 @@ export default class CodeWatchExtension extends Extension {
     });
     this._rateLimit7dItem.visible = false;
     this._indicator.menu.addMenuItem(this._rateLimit7dItem);
+
+    this._autoRefreshItem = new PopupMenu.PopupSwitchMenuItem(
+      "Auto-refresh on task complete",
+      false,
+    );
+    this._autoRefreshItem.connect("toggled", (item, state) => {
+      this._autoRefreshOnDone = state;
+    });
+    this._indicator.menu.addMenuItem(this._autoRefreshItem);
 
     this._refreshUsageItem = new PopupMenu.PopupMenuItem("Refresh Usage");
     // Default activate() chains to super.activate(), which PopupMenu treats
@@ -191,8 +203,14 @@ export default class CodeWatchExtension extends Extension {
       this._refreshUsage();
       // Edge-triggered on the transition into "done" (a real Stop hook
       // firing), not on every file-monitor event while status stays "done" —
-      // see docs/SECURITY.md "Opt-in network egress".
-      if (this._state.status === "done" && this._lastStatus !== "done") {
+      // see docs/SECURITY.md "Opt-in network egress". Gated on the
+      // Auto-refresh toggle (default off) so a manual "Refresh Usage" click
+      // is the only rate-limit request by default.
+      if (
+        this._autoRefreshOnDone &&
+        this._state.status === "done" &&
+        this._lastStatus !== "done"
+      ) {
         this._refreshRateLimits();
       }
       this._lastStatus = this._state.status;
@@ -215,7 +233,7 @@ export default class CodeWatchExtension extends Extension {
   _refreshUsage() {
     const transcriptPath = this._state.transcript_path;
     if (!transcriptPath) {
-      this._usageLabelItem.label.set_text("Session — no active session yet");
+      this._usageLabelItem.label.set_text("No active session yet");
       return;
     }
 
@@ -225,7 +243,7 @@ export default class CodeWatchExtension extends Extension {
         let text;
         try {
           const [, contents] = file.load_contents_finish(result);
-          text = `Session — ${summarizeUsage(new TextDecoder().decode(contents))}`;
+          text = `${summarizeUsage(new TextDecoder().decode(contents))}`;
         } catch (e) {
           // Transcript may be mid-write, same as the state file.
           text = "Session — usage unavailable";
@@ -244,21 +262,26 @@ export default class CodeWatchExtension extends Extension {
     this._refreshUsageItem.label.set_text("Checking…");
     this._rateLimit5hItem.visible = false;
     this._rateLimit7dItem.visible = false;
-    Gio.File.new_for_path(TOKEN_PATH).load_contents_async(null, (file, result) => {
-      let token;
-      try {
-        const [, contents] = file.load_contents_finish(result);
-        token = new TextDecoder().decode(contents).trim();
-      } catch (e) {
-        this._refreshUsageItem?.label.set_text(`No token file at ${TOKEN_PATH}`);
-        return;
-      }
-      if (!token) {
-        this._refreshUsageItem?.label.set_text("Token file is empty");
-        return;
-      }
-      this._probeRateLimits(token);
-    });
+    Gio.File.new_for_path(TOKEN_PATH).load_contents_async(
+      null,
+      (file, result) => {
+        let token;
+        try {
+          const [, contents] = file.load_contents_finish(result);
+          token = new TextDecoder().decode(contents).trim();
+        } catch (e) {
+          this._refreshUsageItem?.label.set_text(
+            `No token file at ${TOKEN_PATH}`,
+          );
+          return;
+        }
+        if (!token) {
+          this._refreshUsageItem?.label.set_text("Token file is empty");
+          return;
+        }
+        this._probeRateLimits(token);
+      },
+    );
   }
 
   _probeRateLimits(token) {
@@ -275,7 +298,9 @@ export default class CodeWatchExtension extends Extension {
         try {
           bytes = session.send_and_read_finish(result);
         } catch (e) {
-          this._refreshUsageItem?.label.set_text(`Rate limit check failed — ${e.message}`);
+          this._refreshUsageItem?.label.set_text(
+            `Rate limit check failed — ${e.message}`,
+          );
           return;
         }
         // Not message.get_status(): GJS throws when the raw HTTP status
@@ -292,11 +317,15 @@ export default class CodeWatchExtension extends Extension {
         }
         if (statusCode < 200 || statusCode >= 300) {
           const detail = data?.error?.message ?? `HTTP ${statusCode}`;
-          this._refreshUsageItem?.label.set_text(`Rate limit check failed — ${detail}`);
+          this._refreshUsageItem?.label.set_text(
+            `Rate limit check failed — ${detail}`,
+          );
           return;
         }
         if (!data) {
-          this._refreshUsageItem?.label.set_text("Rate limit check failed — bad response");
+          this._refreshUsageItem?.label.set_text(
+            "Rate limit check failed — bad response",
+          );
           return;
         }
         this._refreshUsageItem?.label.set_text("Refresh Usage");
@@ -333,9 +362,11 @@ export default class CodeWatchExtension extends Extension {
     this._usageLabelItem = null;
     this._rateLimit5hItem = null;
     this._rateLimit7dItem = null;
+    this._autoRefreshItem = null;
     this._refreshUsageItem = null;
     this._httpSession = null;
     this._lastStatus = null;
+    this._autoRefreshOnDone = null;
     this._exitItem = null;
     this._state = null;
   }

@@ -96,13 +96,20 @@ Built in `enable()`, top to bottom:
     hiding the row, so a partial response is still visibly a partial
     response. Both rows stay hidden until a check succeeds, and re-hide
     while a new check is in flight, so stale numbers are never shown as
-    current. `_refresh()` edge-triggers `_refreshRateLimits()` when
+    current.
+  - **Auto-refresh on task complete** (`_autoRefreshItem`,
+    `PopupSwitchMenuItem`) — off by default on every `enable()`. When on,
+    `_refresh()` edge-triggers `_refreshRateLimits()` when
     `this._state.status` transitions to `"done"` (a Stop hook firing),
     tracked via `this._lastStatus` so it doesn't re-fire on every
-    file-monitor event while status stays `"done"` or on menu reopen — see
+    file-monitor event while status stays `"done"` or on menu reopen. When
+    off (the default), the Stop-hook edge is still tracked but the request
+    is skipped, so "Refresh Usage" is the only thing that triggers a
+    rate-limit request. The toggle state (`this._autoRefreshOnDone`) is
+    in-memory only — see
     [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check)
-    for why this stays opt-in (gated on the token file existing) rather
-    than unconditional, and
+    for why this stays opt-in (gated on both the token file existing and
+    this switch) rather than unconditional, and
     ["Setting up the Claude Usage token"](#setting-up-the-claude-usage-token)
     below for how to actually get it working.
   - **Refresh Usage** (`_refreshUsageItem`, `PopupMenuItem`) — manual

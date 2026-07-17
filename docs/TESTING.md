@@ -71,15 +71,20 @@ EOF
     [EXTENSION.md](EXTENSION.md#setting-up-the-claude-usage-token) for how
     to create `~/.config/codewatch/token` via `claude setup-token`. They
     stay hidden until a check succeeds, and re-hide while a new check is in
-    flight rather than showing stale numbers. They should auto-refresh once
-    per real turn: run the "Drive the hook handler directly" `Stop` event
-    above (or finish a real prompt) while the menu is open and confirm they
-    update on their own. Fire `Stop` twice in a row without a
-    `UserPromptSubmit` in between and confirm it does **not** double-fire
-    the check the second time (the edge-trigger on `status` transitioning
-    to `"done"` should only fire once per transition) — watch for a second
-    "Checking…" flash on the Refresh Usage row, or check
-    `journalctl --user -f -o cat` for a second request.
+    flight rather than showing stale numbers.
+  - **Auto-refresh on task complete** toggle — should be **off** immediately
+    after enabling the extension. With it off, run the "Drive the hook
+    handler directly" `Stop` event (or finish a real prompt) while the menu
+    is open and confirm the 5h/7d rows do **not** update on their own — only
+    clicking "Refresh Usage" should trigger a request. Turn the toggle on
+    and repeat: this time the rows should auto-refresh once per real turn.
+    Fire `Stop` twice in a row without a `UserPromptSubmit` in between (with
+    the toggle on) and confirm it does **not** double-fire the check the
+    second time (the edge-trigger on `status` transitioning to `"done"`
+    should only fire once per transition) — watch for a second "Checking…"
+    flash on the Refresh Usage row, or check `journalctl --user -f -o cat`
+    for a second request. Reopening the menu should never by itself trigger
+    a rate-limit request, toggle on or off.
   - **Refresh Usage** button — clicking it should refresh both the Session
     row and the 5h/7d rows without closing the menu, showing "Checking…"
     while the rate-limit request is in flight. Rename the token file
