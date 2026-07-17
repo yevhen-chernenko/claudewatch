@@ -30,10 +30,19 @@ const TOKEN_PATH = GLib.build_filenamev([
 // API quota, unlike a Messages completion call.
 const RATE_LIMIT_URL = "https://api.anthropic.com/api/oauth/usage";
 
-const STATUS_TEXT = {
-  running: "Task is running…",
-  done: "Task complete!",
-};
+// The panel label's three states: idle ("standby", also where it lands 5s
+// after a task finishes), a task in flight ("running", pulsing orange), and
+// the 5s green flash right after a task finishes ("complete").
+const STANDBY_TEXT = "ClaudeWatch";
+const RUNNING_TEXT = "Claude is working…";
+const COMPLETE_TEXT = "Task complete!";
+
+const STANDBY_STYLE = "padding: 0 6px;";
+const RUNNING_STYLE =
+  "padding: 0 6px; background-color: #e67e22; border-radius: 4px;";
+const COMPLETE_STYLE =
+  "padding: 0 6px; background-color: #2ecc71; border-radius: 4px;";
+const COMPLETE_FLASH_MS = 5000;
 
 function formatTokenCount(n) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -101,8 +110,9 @@ export default class CodeWatchExtension extends Extension {
 
     this._indicator = new PanelMenu.Button(0.0, this.metadata.name, false);
     this._label = new St.Label({
-      text: "CodeWatch",
+      text: STANDBY_TEXT,
       y_align: Clutter.ActorAlign.CENTER,
+      style: STANDBY_STYLE,
     });
     this._indicator.add_child(this._label);
 
@@ -128,7 +138,11 @@ export default class CodeWatchExtension extends Extension {
 
     this._httpSession = new Soup.Session();
     this._lastStatus = null;
+    this._initialRefreshDone = false;
     this._autoRefreshOnDone = false;
+    this._flashTimeoutId = null;
+    this._pulseDim = false;
+    this._uiState = "standby";
 
     this._rateLimit5hItem = new PopupMenu.PopupMenuItem("", {
       reactive: false,
@@ -188,33 +202,131 @@ export default class CodeWatchExtension extends Extension {
 
   _refresh() {
     this._stateFile.load_contents_async(null, (file, result) => {
-      let text;
       try {
         const [, contents] = file.load_contents_finish(result);
         this._state = JSON.parse(new TextDecoder().decode(contents));
-        text = STATUS_TEXT[this._state.status] ?? "CodeWatch";
       } catch (e) {
         // No state file yet, or it's mid-write.
         this._state = {};
-        text = "CodeWatch";
       }
-      this._label?.set_text(text);
       this._openInCodeItem?.setSensitive(!!this._state.cwd);
       this._refreshUsage();
-      // Edge-triggered on the transition into "done" (a real Stop hook
-      // firing), not on every file-monitor event while status stays "done" —
-      // see docs/SECURITY.md "Opt-in network egress". Gated on the
-      // Auto-refresh toggle (default off) so a manual "Refresh Usage" click
-      // is the only rate-limit request by default.
-      if (
-        this._autoRefreshOnDone &&
-        this._state.status === "done" &&
-        this._lastStatus !== "done"
-      ) {
-        this._refreshRateLimits();
+      // Edge-triggered on status transitions, not on every file-monitor
+      // event while status stays the same. Text and style are both driven
+      // from this._uiState (set by the _enter* methods below), not
+      // directly from the raw hook status — that's what lets the 5s
+      // post-completion timer fall back to "Standby" on its own even
+      // though the state file still says status: "done".
+      //
+      // The very first refresh after enable() is not an edge: state.json
+      // can still say status: "done" from before the shell reload, and
+      // treating that as a fresh completion would replay the green flash
+      // on startup instead of landing on standby (or, for a leftover
+      // "running" status, on the pulsing running state with no edge to
+      // trigger it).
+      let justCompleted = false;
+      if (!this._initialRefreshDone) {
+        this._initialRefreshDone = true;
+        if (this._state.status === "running") {
+          this._enterRunning();
+        } else {
+          this._enterStandby();
+        }
+      } else {
+        const previousStatus = this._lastStatus;
+        const justStarted =
+          this._state.status === "running" && previousStatus !== "running";
+        justCompleted =
+          this._state.status === "done" && previousStatus !== "done";
+
+        if (justStarted) {
+          this._enterRunning();
+        } else if (justCompleted) {
+          this._enterComplete();
+        } else if (
+          this._state.status !== "running" &&
+          this._state.status !== "done"
+        ) {
+          // No task in flight and no recent completion (e.g. a
+          // malformed/reset state file) — idle.
+          this._enterStandby();
+        }
       }
       this._lastStatus = this._state.status;
+      // Gated on the Auto-refresh toggle (default off) so a manual "Refresh
+      // Usage" click is the only rate-limit request by default — see
+      // docs/SECURITY.md "Opt-in network egress".
+      if (this._autoRefreshOnDone && justCompleted) {
+        this._refreshRateLimits();
+      }
     });
+  }
+
+  // Idle state: no pulse, no flash, plain padded label. Also where the
+  // 5s post-completion flash lands once it times out.
+  _enterStandby() {
+    this._uiState = "standby";
+    this._label?.remove_all_transitions();
+    if (this._flashTimeoutId) {
+      GLib.source_remove(this._flashTimeoutId);
+      this._flashTimeoutId = null;
+    }
+    if (this._label) {
+      this._label.opacity = 255;
+      this._label.style = STANDBY_STYLE;
+      this._label.set_text(STANDBY_TEXT);
+    }
+  }
+
+  // Task-in-flight state: slowly pulses the label orange by easing its
+  // opacity back and forth (the background color itself stays fixed).
+  _enterRunning() {
+    this._uiState = "running";
+    if (this._flashTimeoutId) {
+      GLib.source_remove(this._flashTimeoutId);
+      this._flashTimeoutId = null;
+    }
+    if (!this._label) return;
+    this._label.style = RUNNING_STYLE;
+    this._label.set_text(RUNNING_TEXT);
+    this._label.opacity = 255;
+    this._pulseDim = false;
+    this._pulseLoop();
+  }
+
+  _pulseLoop() {
+    if (!this._label || this._uiState !== "running") return;
+    this._pulseDim = !this._pulseDim;
+    this._label.ease({
+      opacity: this._pulseDim ? 120 : 255,
+      duration: 1200,
+      mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
+      onComplete: () => this._pulseLoop(),
+    });
+  }
+
+  // Just-finished state: flashes the label green for COMPLETE_FLASH_MS,
+  // then falls back to standby on its own.
+  _enterComplete() {
+    this._uiState = "complete";
+    this._label?.remove_all_transitions();
+    if (this._flashTimeoutId) {
+      GLib.source_remove(this._flashTimeoutId);
+      this._flashTimeoutId = null;
+    }
+    if (!this._label) return;
+    this._label.opacity = 255;
+    this._label.style = COMPLETE_STYLE;
+    this._label.set_text(COMPLETE_TEXT);
+    this._flashTimeoutId = GLib.timeout_add(
+      GLib.PRIORITY_DEFAULT,
+      COMPLETE_FLASH_MS,
+      () => {
+        this._flashTimeoutId = null;
+        this._enterStandby();
+        return GLib.SOURCE_REMOVE;
+      },
+    );
   }
 
   _openInVsCode() {
@@ -354,10 +466,17 @@ export default class CodeWatchExtension extends Extension {
     this._monitor?.disconnect(this._monitorId);
     this._monitor = null;
     this._stateFile = null;
+    if (this._flashTimeoutId) {
+      GLib.source_remove(this._flashTimeoutId);
+      this._flashTimeoutId = null;
+    }
+    this._label?.remove_all_transitions();
     this._indicator?.menu.disconnect(this._menuOpenStateId);
     this._indicator?.destroy();
     this._indicator = null;
     this._label = null;
+    this._pulseDim = null;
+    this._uiState = null;
     this._openInCodeItem = null;
     this._usageLabelItem = null;
     this._rateLimit5hItem = null;
@@ -366,6 +485,7 @@ export default class CodeWatchExtension extends Extension {
     this._refreshUsageItem = null;
     this._httpSession = null;
     this._lastStatus = null;
+    this._initialRefreshDone = null;
     this._autoRefreshOnDone = null;
     this._exitItem = null;
     this._state = null;
