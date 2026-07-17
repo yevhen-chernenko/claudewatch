@@ -42,16 +42,28 @@ const WAITING_PULSE_MS = 600;
 // only owns file-watching wiring and hands this class parsed state via
 // applyState().
 export class CodeWatchIndicator {
-  constructor(uuid, name) {
+  constructor(uuid, name, extensionPath) {
     this._uuid = uuid;
 
     this.button = new PanelMenu.Button(0.0, name, false);
+
+    this._icon = new St.Icon({
+      gicon: Gio.icon_new_for_string(
+        `${extensionPath}/icons/codewatch-symbolic.svg`,
+      ),
+      icon_size: 16,
+      y_align: Clutter.ActorAlign.CENTER,
+      style: "padding-right: 4px;",
+    });
     this._label = new St.Label({
       text: STANDBY_TEXT,
       y_align: Clutter.ActorAlign.CENTER,
       style: STANDBY_STYLE,
     });
-    this.button.add_child(this._label);
+    this._box = new St.BoxLayout({ y_align: Clutter.ActorAlign.CENTER });
+    this._box.add_child(this._icon);
+    this._box.add_child(this._label);
+    this.button.add_child(this._box);
 
     // Fixed width so the menu doesn't reflow as row text changes length
     // (e.g. "Checking…" vs. a long rate-limit error string).

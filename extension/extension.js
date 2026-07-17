@@ -9,7 +9,11 @@ import { CodeWatchIndicator } from "./lib/indicator.js";
 
 export default class CodeWatchExtension extends Extension {
   enable() {
-    this._indicator = new CodeWatchIndicator(this.uuid, this.metadata.name);
+    this._indicator = new CodeWatchIndicator(
+      this.uuid,
+      this.metadata.name,
+      this.path,
+    );
     Main.panel.addToStatusArea(this.uuid, this._indicator.button);
 
     this._stateFile = Gio.File.new_for_path(STATE_PATH);
