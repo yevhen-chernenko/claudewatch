@@ -4,6 +4,7 @@ import St from "gi://St";
 import GLib from "gi://GLib";
 import Gio from "gi://Gio";
 import Clutter from "gi://Clutter";
+import Pango from "gi://Pango";
 import Soup from "gi://Soup?version=3.0";
 import * as Main from "resource:///org/gnome/shell/ui/main.js";
 import * as PanelMenu from "resource:///org/gnome/shell/ui/panelMenu.js";
@@ -127,6 +128,14 @@ export class ClaudeWatchIndicator {
     // menu. This is a manual override on top of the automatic refreshes
     // below — not the only way either row updates.
     this._refreshUsageItem.activate = () => this._onRefreshUsageClicked();
+    // Error strings from _probeRateLimits() (e.g. an OAuth scope/permission
+    // message) can run well past the menu's fixed 300px width; without
+    // wrapping, St.Label just clips them instead of ellipsizing, hiding the
+    // actual reason.
+    this._refreshUsageItem.label.clutter_text.set({
+      line_wrap: true,
+      line_wrap_mode: Pango.WrapMode.WORD_CHAR,
+    });
     this.button.menu.addMenuItem(this._refreshUsageItem);
 
     this.button.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
