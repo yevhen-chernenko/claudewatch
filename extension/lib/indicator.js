@@ -11,7 +11,11 @@ import * as PopupMenu from "resource:///org/gnome/shell/ui/popupMenu.js";
 
 import { resolveUiAction } from "./state.js";
 import { summarizeUsage } from "./usage.js";
-import { TOKEN_PATH, RATE_LIMIT_URL, formatRateLimitWindow } from "./rateLimit.js";
+import {
+  TOKEN_PATH,
+  RATE_LIMIT_URL,
+  formatRateLimitWindow,
+} from "./rateLimit.js";
 
 // The panel label's four states: idle ("standby", also where it lands 5s
 // after a task finishes), a task in flight ("running", pulsing orange), the
@@ -53,7 +57,7 @@ export class CodeWatchIndicator {
       ),
       icon_size: 16,
       y_align: Clutter.ActorAlign.CENTER,
-      style: "padding-right: 4px;",
+      style: "padding-right: 6px;",
     });
     this._label = new St.Label({
       text: STANDBY_TEXT,

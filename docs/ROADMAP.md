@@ -99,8 +99,6 @@ changelog, so keep it in sync as items ship rather than trusting it blindly.
   session token summary, an opt-in "Claude Usage" rate-limit check, and
   "Exit" — see [EXTENSION.md](EXTENSION.md#popup-menu). None of these are
   session-scoped yet, since there's still only one state file._
-- [ ] Panel icon: a small Claude icon rendered before the status text, not a
-  text-only label.
 - [x] Desktop notifications: permission-needed and run-finished, wired to
   the `Notification`/`PermissionRequest` and `Stop` hooks respectively, each
   paired with a themed system sound (`Main.notify` + `play_from_theme`, see
