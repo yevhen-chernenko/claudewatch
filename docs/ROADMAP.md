@@ -53,6 +53,18 @@ format) are expensive to change later.
   without needing a lock.
 - Pin the extension UUID and GSettings schema ID now — both are load-bearing
   for later installs and hard to change after real users have it installed.
+- **Pending rename, not yet actioned**: app display name → "ClaudeWatch for
+  GNOME", repo → `claudewatch` (from CodeWatch/codewatch). No code,
+  `metadata.json`, or GitHub repo changes have been made yet. Resolve this
+  _before_ treating the UUID/GSettings schema ID pin above as final — the
+  UUID is conventionally derived from the name (e.g.
+  `claudewatch@yevhen-chernenko.github.io`), and changing it after real
+  installs exist is exactly the expensive-to-change scenario that bullet
+  warns about. When this is actioned, it touches at minimum:
+  `extension/metadata.json` (`name`, `uuid`, `url`), every `Main.notify(...)`
+  call site (currently titled `"CodeWatch"`), README.md and the doc headers
+  under `docs/`, and — as a separate, externally-visible step — the actual
+  GitHub repository name and git remote URL.
 - GNOME extension skeleton: ESM `extension.js`, `enable()`/`disable()` with
   full symmetry from the very first commit (not retrofitted later), a
   `PanelMenu.Button` with a static icon, a `Gio.FileMonitor` on the sessions
@@ -70,19 +82,70 @@ format) are expensive to change later.
 Goal: the feature set described in the brief, fully working, locally, for a
 single user running Claude Code from VS Code and/or a terminal.
 
-- Full state machine: idle / running / waiting_approval / done, aggregate
-  panel icon across concurrent sessions (priority order per ARCHITECTURE.md).
-- Popup menu: per-session breakdown (cwd, status, mechanical counters:
-  commands run, files edited) plus aggregate view.
-- Desktop notifications: permission-needed and run-finished, wired to the
-  `Notification` and `Stop` hooks respectively. Both toggleable in prefs.
-- Mechanical recap counters only — no semantic summarization yet (that's
-  Phase 4, explicitly a stretch goal per the brief).
-- Preferences window (libadwaita, separate process): notification toggles,
+Checkboxes track what's actually landed in the current interim
+single-state-file implementation (see [EXTENSION.md](EXTENSION.md) for what
+exists today) versus what's still ahead — this list is a plan, not a
+changelog, so keep it in sync as items ship rather than trusting it blindly.
+
+- [x] Core state machine: standby / running / waiting_approval / done,
+  implemented against the current single global `state.json`. Aggregate
+  panel icon across concurrent sessions (priority order per
+  ARCHITECTURE.md) is **not** done yet — that needs the per-session file
+  layout from ARCHITECTURE.md first, since right now `cwd`/`status`/
+  `transcript_path` just reflect whichever session last fired a hook.
+- [ ] Popup menu: per-session breakdown (cwd, status, mechanical counters:
+  commands run, files edited) plus aggregate view. _Shipped so far, ahead of
+  and independent from this per-session design: "Open in VS Code", a local
+  session token summary, an opt-in "Claude Usage" rate-limit check, and
+  "Exit" — see [EXTENSION.md](EXTENSION.md#popup-menu). None of these are
+  session-scoped yet, since there's still only one state file._
+- [ ] Panel icon: a small Claude icon rendered before the status text, not a
+  text-only label.
+- [x] Desktop notifications: permission-needed and run-finished, wired to
+  the `Notification`/`PermissionRequest` and `Stop` hooks respectively, each
+  paired with a themed system sound (`Main.notify` + `play_from_theme`, see
+  `_notify()` in `extension/lib/indicator.js`). **Not yet toggleable** —
+  there is no prefs window yet at all, see the mute-toggle and preferences
+  items below.
+- [ ] Mute-notifications toggle (muted by default) gating the desktop
+  notifications above, mirroring the existing "Auto-refresh on task
+  complete" opt-in toggle pattern in the popup menu.
+- [ ] Separate "compacting" status for manual context compaction: `PreCompact`
+  (matcher `manual`) enters it, `PostCompact` clears it back to standby.
+  Deliberately scoped to the manual `/compact` path only — the matcher
+  distinction lives in the hook routing config, not the payload, so the
+  `auto` matcher stays unwired unless a later decision explicitly wants
+  auto-compaction surfaced too.
+- [ ] Mechanical recap counters only — no semantic summarization yet (that's
+  Phase 4, explicitly a stretch goal per the brief). `hook-handler.js`
+  doesn't track `tool_calls`/`files_edited`/`commands_run` yet, only
+  `status`/`cwd`/`transcript_path`.
+- [ ] Preferences window (libadwaita, separate process): notification toggles,
   stale-session GC threshold, and the hook install/uninstall action from
   ARCHITECTURE.md's install flow (explicit action, backup, merge, reversible).
-- Stale-session GC running on a periodic timeout, verified not to leak or
-  grow unbounded.
+- [ ] Stale-session GC running on a periodic timeout, verified not to leak or
+  grow unbounded. Not applicable yet to the single global state file; lands
+  with the per-session rework.
+- [ ] TypeScript for type checking: JSDoc-annotated `.js`, checked via
+  `tsc --checkJs --allowJs --noEmit` against type stubs for the `gi://`
+  and shell-resource modules — not a compile-to-`.js` build step. The
+  extension package still ships plain ESM JS with no bundler, consistent
+  with EGO's "external scripts/binaries strongly discouraged" stance and
+  this repo's existing no-build-step layout (see
+  [EXTENSION.md](EXTENSION.md#file-layout)). Also directly targets EGO's
+  "imaginary API usage" rejection criterion (SECURITY.md) by catching
+  calls to APIs that don't actually exist at check time instead of only at
+  review time.
+- [ ] Vitest, scoped to what's actually pure and host-independent:
+  `extension/lib/state.js`'s `resolveUiAction()`, `extension/lib/usage.js`,
+  the formatting half of `extension/lib/rateLimit.js`, and
+  `hooks/hook-handler.js`'s event-to-status mapping. Everything that
+  touches `gi://`/`Main`/`Soup` stays out of unit-test scope per this
+  project's testing philosophy (behavior-driven, mock only at real system
+  boundaries, extract pure helpers rather than mock shell internals) —
+  that's what [TESTING.md](TESTING.md)'s manual pass is for. The Phase 2
+  `extension/lib/` split already isolated exactly the functions this would
+  cover.
 - **Exit criteria**: you use it as your actual daily driver for a week
   across at least two concurrent sessions (e.g. VS Code + terminal) without
   needing to manually intervene, restart the shell, or edit state files by

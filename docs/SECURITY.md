@@ -161,25 +161,49 @@ Mitigations, concrete and ongoing (not a one-time pass before submission):
 
 ## Hardening checklist (track status as phases land)
 
-- [ ] State directory created with `0700`, files with `0600`
-- [ ] Atomic writes only (`tmp` + `rename`) for every state file
-- [ ] Extension tolerates a missing/malformed/partially-written state file
-      without crashing the shell
-- [ ] No sync file I/O on the shell main loop — `Gio.File` async APIs only
-- [ ] `enable()`/`disable()` audited for full symmetry (signals, sources,
-      widgets, caches)
-- [ ] No object/signal/source creation outside `enable()`
+- [ ] State directory created with `0700`, files with `0600` — not yet:
+      `hook-handler.js`'s `mkdirSync`/`writeFileSync` don't pass a `mode`,
+      so both fall back to the process umask (typically `0755`/`0644`).
+- [x] Atomic writes only (`tmp` + `rename`) for every state file — verified
+      in `hooks/hook-handler.js` (`writeFileSync(tmpPath)` +
+      `renameSync(tmpPath, statePath)`).
+- [x] Extension tolerates a missing/malformed/partially-written state file
+      without crashing the shell — `extension.js`'s `_refresh()` catches
+      the parse/read failure and falls back to `{}`.
+- [x] No sync file I/O on the shell main loop — `Gio.File` async APIs
+      only. Verified: no `_sync(` calls anywhere under `extension/`.
+- [x] `enable()`/`disable()` audited for full symmetry (signals, sources,
+      widgets, caches) — re-audited during the Phase 2 `extension/lib/`
+      split: `enable()`'s file monitor is disconnected in `disable()`, and
+      `CodeWatchIndicator.destroy()` removes the pending flash timeout,
+      disconnects the menu's `open-state-changed` signal, and destroys the
+      `PanelMenu.Button` (which takes its child widgets/menu items with
+      it). Re-verify after any future change to `enable()`/`disable()` or
+      `CodeWatchIndicator`'s constructor/`destroy()`.
+- [x] No object/signal/source creation outside `enable()` — verified: no
+      module-scope `new`/`Main.`/`Gio.`/`GLib.` calls anywhere under
+      `extension/`, only constant and class/function definitions.
 - [ ] `settings.json` writes: explicit user action, backup taken first,
-      merge (not overwrite), reversible uninstall
-- [ ] No network calls except the opt-in, user-triggered "Claude Usage"
+      merge (not overwrite), reversible uninstall — not implemented yet;
+      no install-flow/prefs code exists (see ARCHITECTURE.md's install
+      flow and ROADMAP.md's Phase 2 preferences-window item).
+- [x] No network calls except the opt-in, user-triggered "Claude Usage"
       rate-limit check (see "Opt-in network egress" above) — everything
-      else in the extension and hook handler stays local-only
-- [ ] No telemetry/analytics
-- [ ] Hook handler has zero npm dependencies (reduces supply-chain surface
-      to just Node's builtins)
+      else in the extension and hook handler stays local-only. `Soup` is
+      only imported in `extension/lib/indicator.js`, and only used inside
+      `_probeRateLimits()`.
+- [x] No telemetry/analytics
+- [x] Hook handler has zero npm dependencies (reduces supply-chain surface
+      to just Node's builtins) — `hooks/hook-handler.js` only requires
+      `fs`, `os`, `path`.
 - [ ] GC policy for stale session files verified (no unbounded growth in
-      `~/.local/state/codewatch/`)
-- [ ] SPDX GPL-2.0-or-later header on every source file
+      `~/.local/state/codewatch/`) — not applicable yet: there's a single
+      global `state.json`, not per-session files, so nothing accumulates
+      today, but there's also no GC logic to verify. Lands with the
+      per-session rework.
+- [x] SPDX GPL-2.0-or-later header on every source file — verified across
+      `extension/extension.js`, every file under `extension/lib/`, and
+      `hooks/hook-handler.js`.
 - [ ] Self-review pass against the AI-generated-code rejection criteria
       above, done as its own pass before submission
 - [ ] `gnome-extensions-tool` / EGO's own linting (if available) run clean

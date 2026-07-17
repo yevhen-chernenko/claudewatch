@@ -3,7 +3,9 @@
 Status: interim, for the single-state-file implementation (see
 [ARCHITECTURE.md](ARCHITECTURE.md) for the per-session design this will move
 to). No automated tests yet — this is what to run by hand after touching
-`extension/extension.js` or `hooks/hook-handler.js`.
+`extension/extension.js`, anything under `extension/lib/`, or
+`hooks/hook-handler.js`. See [EXTENSION.md](EXTENSION.md#file-layout) for
+what lives in each file.
 
 ## Reload the extension
 
@@ -20,12 +22,16 @@ the panel label after each command — it updates within ~1s via the
 
 ```sh
 echo '{"hook_event_name":"UserPromptSubmit"}' | node hooks/hook-handler.js
-# panel -> "Claude is working…" (orange, pulsing)
+# panel -> "Claude is working..." (orange, pulsing)
 
 echo '{"hook_event_name":"Notification"}' | node hooks/hook-handler.js
 # panel -> "Claude wants something!" (blue, pulsing twice as fast)
 # also fires a desktop notification (Main.notify) plus a "dialog-question"
 # themed system sound
+
+echo '{"hook_event_name":"PermissionRequest"}' | node hooks/hook-handler.js
+# same "waiting" transition as Notification above — PermissionRequest and
+# Notification both map to status: waiting_approval in hook-handler.js
 
 echo '{"hook_event_name":"Stop"}' | node hooks/hook-handler.js
 # panel -> "Claude is done!" (green flash, then standby after 5s)
@@ -41,9 +47,11 @@ cat "${XDG_STATE_HOME:-$HOME/.local/state}/codewatch/state.json"
 ## End-to-end
 
 Send a real prompt in a Claude Code session with the hooks installed (see
-`~/.claude/settings.json`) and confirm the panel flips to "Task is
-running…" when the prompt is submitted and "Task complete!" once Claude
-stops.
+`~/.claude/settings.json`) and confirm the panel flips to "Claude is
+working..." when the prompt is submitted, to "Claude wants something!" (with
+a notification + sound) if Claude asks a question or needs a permission, and
+to "Claude is done!" (with a notification + sound, then standby after 5s)
+once Claude stops.
 
 ## Popup menu
 

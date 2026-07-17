@@ -1,6 +1,11 @@
 # Architecture
 
-Status: planning draft. Nothing in this document is implemented yet.
+Status: planning draft for the per-session design below — this describes
+where CodeWatch is headed, not what's shipped. The current interim
+implementation (single global `state.json` rather than per-session files,
+no GC, no install flow) is documented in [EXTENSION.md](EXTENSION.md); see
+[ROADMAP.md](ROADMAP.md) for which pieces of this document are and aren't
+built yet.
 
 ## Components
 
