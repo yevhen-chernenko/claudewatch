@@ -33,17 +33,25 @@ fired a hook, same limitation already true of `status`.
 ## Done: Claude Usage rate-limit row (opt-in network call)
 
 Added a fourth popup menu row, "Claude Usage", that reads the account-level
-5-hour/7-day rate-limit windows (the same numbers the CLI's own TUI shows)
-by reading `anthropic-ratelimit-unified-5h-*`/`-7d-*` response headers off a
-minimal (`max_tokens: 1`) call to `api.anthropic.com/v1/messages`. There's
-no local file or documented `claude` subcommand that exposes this data —
-confirmed by checking `claude auth status`, `doctor`, `agents`, `project`,
-and grepping the installed CLI binary — so a real API call is the only way.
+5-hour/7-day rate-limit windows (the same numbers the CLI's own TUI shows).
+There's no local file or documented `claude` subcommand that exposes this
+data — confirmed by checking `claude auth status`, `doctor`, `agents`,
+`project`, and grepping the installed CLI binary — so a real network call is
+the only way. Initially implemented as a `max_tokens: 1` Messages completion
+call (parsing `anthropic-ratelimit-unified-*` response headers), which
+worked but spent real API quota on every check. Replaced with a `GET` to
+`api.anthropic.com/api/oauth/usage`, a dedicated usage-status endpoint that
+doesn't invoke a model — found by reading the bundled source of the popular
+"Claude Code Usage Tracker" VS Code extension, which uses the same endpoint.
+This costs no quota, so the only remaining reason for the request/reset
+cadence design is network-disclosure discipline, not cost avoidance.
 
 This is CodeWatch's first network call, which is why it's deliberately
 opt-in (does nothing without a manually-created
-`~/.config/codewatch/token`, minted via `claude setup-token`) and
-click-to-refresh rather than automatic — see
+`~/.config/codewatch/token`, minted via `claude setup-token`). It
+auto-refreshes once per real turn (edge-triggered off the Stop hook's
+`status: "done"` transition) plus on manual click, rather than on a
+background timer — see
 [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check) for
 the full reasoning and why the "no network calls" hardening checklist item
 was updated rather than silently violated.

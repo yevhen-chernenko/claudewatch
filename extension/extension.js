@@ -25,11 +25,10 @@ const TOKEN_PATH = GLib.build_filenamev([
   "token",
 ]);
 
-const RATE_LIMIT_URL = "https://api.anthropic.com/v1/messages";
-// Only used to trigger a response carrying rate-limit headers; the actual
-// completion is discarded, so the model choice doesn't matter beyond being
-// valid and cheap.
-const RATE_LIMIT_MODEL = "claude-haiku-4-5-20251001";
+// Dedicated usage-status endpoint (same one the official Claude Code CLI's
+// own usage display reads) — a GET with no model invocation, so it costs no
+// API quota, unlike a Messages completion call.
+const RATE_LIMIT_URL = "https://api.anthropic.com/api/oauth/usage";
 
 const STATUS_TEXT = {
   running: "Task is running…",
@@ -73,8 +72,8 @@ function summarizeUsage(transcriptText) {
   return `In ${formatTokenCount(input)} · Out ${formatTokenCount(output)} · Cached ${formatTokenCount(cached)}`;
 }
 
-function formatResetTime(unixSeconds) {
-  const reset = GLib.DateTime.new_from_unix_local(unixSeconds);
+function formatResetTime(isoString) {
+  const reset = GLib.DateTime.new_from_iso8601(isoString, null);
   const hoursUntil = reset.difference(GLib.DateTime.new_now_local()) / 3_600_000_000;
   if (hoursUntil < 24) {
     const minutesUntil = Math.max(0, Math.round(hoursUntil * 60));
@@ -83,15 +82,15 @@ function formatResetTime(unixSeconds) {
   return reset.format("%a %l:%M %p").trim();
 }
 
-// anthropic-ratelimit-unified-* headers: utilization is a 0..1 fraction,
-// reset is a unix timestamp in seconds. A window's pair can be absent if the
+// /api/oauth/usage's five_hour/seven_day fields: utilization is a 0..1
+// fraction, resets_at is an ISO 8601 timestamp. A window is absent if the
 // account has no active usage in it yet.
-function formatRateLimitWindow(headers, prefix, label) {
-  const utilization = headers.get_one(`${prefix}-utilization`);
-  if (utilization == null) return `${label}: unavailable`;
-  const reset = headers.get_one(`${prefix}-reset`);
-  const percent = Math.round(Number.parseFloat(utilization) * 100);
-  const resetText = reset ? ` (resets ${formatResetTime(Number.parseInt(reset, 10))})` : "";
+function formatRateLimitWindow(window, label) {
+  if (window?.utilization == null) return `${label}: unavailable`;
+  const percent = Math.round(window.utilization * 100);
+  const resetText = window.resets_at
+    ? ` (resets ${formatResetTime(window.resets_at)})`
+    : "";
   return `${label} ${percent}%${resetText}`;
 }
 
@@ -128,11 +127,14 @@ export default class CodeWatchExtension extends Extension {
     this._indicator.menu.addMenuItem(this._usageLabelItem);
 
     this._httpSession = new Soup.Session();
+    this._lastStatus = null;
     this._rateLimitItem = new PopupMenu.PopupMenuItem(
-      "Claude Usage — click to check",
+      "Claude Usage — click to refresh",
     );
     // Same close-on-click quirk as the switch above; keep the menu open so
-    // the result is visible without having to reopen it.
+    // the result is visible without having to reopen it. Also auto-fires
+    // via the Stop-hook edge trigger in _refresh() below — this is a
+    // manual override on top of that, not the only way to refresh.
     this._rateLimitItem.activate = () => this._refreshRateLimits();
     this._indicator.menu.addMenuItem(this._rateLimitItem);
 
@@ -190,6 +192,13 @@ export default class CodeWatchExtension extends Extension {
       this._label?.set_text(text);
       this._openInCodeItem?.setSensitive(!!this._state.cwd);
       if (this._usageSwitch?.state) this._refreshUsage();
+      // Edge-triggered on the transition into "done" (a real Stop hook
+      // firing), not on every file-monitor event while status stays "done" —
+      // see docs/SECURITY.md "Opt-in network egress".
+      if (this._state.status === "done" && this._lastStatus !== "done") {
+        this._refreshRateLimits();
+      }
+      this._lastStatus = this._state.status;
     });
   }
 
@@ -256,41 +265,35 @@ export default class CodeWatchExtension extends Extension {
   }
 
   _probeRateLimits(token) {
-    const message = Soup.Message.new("POST", RATE_LIMIT_URL);
-    message.request_headers.append("anthropic-version", "2023-06-01");
-    message.request_headers.append("anthropic-beta", "oauth-2025-04-20");
+    const message = Soup.Message.new("GET", RATE_LIMIT_URL);
     message.request_headers.append("authorization", `Bearer ${token}`);
-    message.set_request_body_from_bytes(
-      "application/json",
-      GLib.Bytes.new(
-        new TextEncoder().encode(
-          JSON.stringify({
-            model: RATE_LIMIT_MODEL,
-            max_tokens: 1,
-            messages: [{ role: "user", content: "." }],
-          }),
-        ),
-      ),
-    );
+    message.request_headers.append("anthropic-beta", "oauth-2025-04-20");
 
     this._httpSession.send_and_read_async(
       message,
       GLib.PRIORITY_DEFAULT,
       null,
       (session, result) => {
+        let bytes;
         try {
-          session.send_and_read_finish(result);
+          bytes = session.send_and_read_finish(result);
         } catch (e) {
           this._rateLimitItem?.label.set_text(`Rate limit check failed — ${e.message}`);
           return;
         }
-        const headers = message.get_response_headers();
+        const status = message.get_status();
+        const data = JSON.parse(new TextDecoder().decode(bytes.get_data()));
+        if (status < 200 || status >= 300 || data.type === "error") {
+          const detail = data.error?.message ?? `HTTP ${status}`;
+          this._rateLimitItem?.label.set_text(`Rate limit check failed — ${detail}`);
+          return;
+        }
         this._rateLimitItem?.label.set_text("Claude Usage — click to refresh");
         this._rateLimit5hItem?.label.set_text(
-          formatRateLimitWindow(headers, "anthropic-ratelimit-unified-5h", "5h"),
+          formatRateLimitWindow(data.five_hour, "5h"),
         );
         this._rateLimit7dItem?.label.set_text(
-          formatRateLimitWindow(headers, "anthropic-ratelimit-unified-7d", "7d"),
+          formatRateLimitWindow(data.seven_day, "7d"),
         );
         if (this._rateLimit5hItem) this._rateLimit5hItem.visible = true;
         if (this._rateLimit7dItem) this._rateLimit7dItem.visible = true;
@@ -322,6 +325,7 @@ export default class CodeWatchExtension extends Extension {
     this._rateLimit5hItem = null;
     this._rateLimit7dItem = null;
     this._httpSession = null;
+    this._lastStatus = null;
     this._exitItem = null;
     this._state = null;
   }

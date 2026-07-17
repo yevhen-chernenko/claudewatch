@@ -78,25 +78,32 @@ Four rows, added in `enable()`:
   `message.id` (the transcript repeats a message once per content block) and
   sums `input_tokens`/`output_tokens`/cache token fields from each
   `assistant` entry's `message.usage`.
-- **Claude Usage** (`PopupMenuItem`) — click-to-check, not auto-refreshed.
-  Reads a bearer token from `~/.config/codewatch/token` (created out of band
-  via `claude setup-token`; the extension never writes this file) and POSTs
-  a minimal (`max_tokens: 1`) request to `api.anthropic.com/v1/messages`
-  solely to read the `anthropic-ratelimit-unified-5h-*`/`-7d-*` response
-  headers — there's no local file or documented CLI command that exposes
-  these directly. `formatRateLimitWindow()` turns each window's utilization
-  fraction/reset-timestamp headers into its own row's text (`5h 27% (resets
-  in 1h 0m)`, `7d 11% (resets Wed 2:00 AM)`), shown on the two read-only rows
-  below the click target (`_rateLimit5hItem`/`_rateLimit7dItem`, same
-  `reactive: false` pattern as the Show Usage summary row). A window with no
-  headers in the response renders as `5h: unavailable` rather than hiding
-  the row, so a partial response is still visibly a partial response. Both
+- **Claude Usage** (`PopupMenuItem`) — auto-refreshes once per real turn,
+  plus click for a manual refresh. `_refresh()` edge-triggers
+  `_refreshRateLimits()` when `this._state.status` transitions to `"done"`
+  (a Stop hook firing), tracked via `this._lastStatus` so it doesn't re-fire
+  on every file-monitor event while status stays `"done"` or on menu
+  reopen. Reads a bearer token from `~/.config/codewatch/token` (created out
+  of band via `claude setup-token`; the extension never writes this file)
+  and GETs `api.anthropic.com/api/oauth/usage` — a dedicated usage-status
+  endpoint, not a Messages completion, so it costs no API quota to check
+  (same endpoint the popular "Claude Code Usage Tracker" VS Code extension
+  uses). There's no local file or documented CLI command that exposes this
+  directly. `formatRateLimitWindow()` turns each window's
+  `utilization`/`resets_at` JSON response fields into its own row's text
+  (`5h 27% (resets in 1h 0m)`, `7d 11% (resets Wed 2:00 AM)`), shown on the
+  two read-only rows below the click target
+  (`_rateLimit5hItem`/`_rateLimit7dItem`, same `reactive: false` pattern as
+  the Show Usage summary row). A window missing from the response renders as
+  `5h: unavailable` rather than hiding the row, so a partial response is
+  still visibly a partial response. Both
   rows stay hidden until a check succeeds, and re-hide while a new check is
   in flight, so stale numbers are never shown as current. Missing token
   file, empty token, or a failed request all resolve to an inline error
   string on the click-target row instead — see
   [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check) for
-  why this is opt-in and user-triggered rather than automatic, and
+  why this stays opt-in (gated on the token file existing) and tied to real
+  Stop events rather than a background timer, and
   ["Setting up the Claude Usage token"](#setting-up-the-claude-usage-token)
   below for how to actually get it working.
 - **Exit** (`PopupMenuItem`) — removes the extension's uuid from the

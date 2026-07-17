@@ -71,13 +71,20 @@ EOF
   Clicking the row should show "Checking…" then settle back to "Claude
   Usage — click to refresh", revealing two rows below it — one like `5h
   27% (resets in 1h 0m)`, the other like `7d 11% (resets Wed 2:00 AM)` —
-  without closing the menu. It should **not** refresh on its own — reopen
-  the menu a few times and confirm the two rows don't change until you
-  click the top row again. While a new check is in flight the two rows
+  without closing the menu. While a new check is in flight the two rows
   should disappear rather than show stale numbers. Rename the token file
   temporarily to confirm the "No token file at …" message appears on the
   click row (with both sub-rows hidden) instead of a silent failure;
   truncate it to an empty file to confirm "Token file is empty".
+
+  It should also auto-refresh once per real turn: run the "Drive the hook
+  handler directly" `Stop` event above (or finish a real prompt) while the
+  menu is open and confirm the two rows update on their own, without a
+  click. Fire `Stop` twice in a row without a `UserPromptSubmit` in between
+  and confirm it does **not** double-fire the check the second time (the
+  edge-trigger on `status` transitioning to `"done"` should only fire once
+  per transition) — watch for a second "Checking…" flash or check
+  `journalctl --user -f -o cat` for a second request.
 - **Exit** — clicking it should remove the indicator from the panel
   immediately and it should not reappear on the next login (it's gone from
   `dconf read /org/gnome/shell/enabled-extensions`) until re-enabled via

@@ -42,21 +42,32 @@ remote endpoint.
 "Claude Usage" (`extension.js`, `_refreshRateLimits`/`_probeRateLimits`) is
 the one feature that leaves the machine. It exists only because Anthropic
 doesn't expose 5-hour/7-day rate-limit utilization through any local file or
-documented CLI command — the only way to read it is off the
-`anthropic-ratelimit-unified-*` response headers of a real Messages API
-call. Design constraints that keep this contained:
+documented CLI command — the only way to read it is a real network call.
+It's a `GET` to the dedicated `/api/oauth/usage` status endpoint (the same
+one the popular "Claude Code Usage Tracker" VS Code extension uses,
+confirmed by reading its bundled source), not a Messages completion — no
+model gets invoked, so unlike an earlier version of this feature, checking
+usage costs no API quota. Design constraints that keep this contained:
 
 - **Opt-in by construction, not a setting**: the check does nothing unless
   `~/.config/codewatch/token` exists. The extension never creates, writes,
   or discovers this file itself — the user creates it manually by running
   `claude setup-token` and saving the output there (`chmod 600`). No file,
-  no network call, ever.
-- **User-triggered, not polled**: it only fires when the "Claude Usage" row
-  is clicked. No timer, no menu-open auto-refresh — unlike the free local
-  `summarizeUsage()` check, each click spends a sliver of real API quota
-  (`max_tokens: 1`), so it must never fire silently.
+  no network call, ever. This is a deliberately narrower trust boundary
+  than reading the interactive CLI's own live session credential
+  (`~/.claude/.credentials.json`, which some other tools read directly) —
+  CodeWatch only ever holds a token the user explicitly minted for this
+  purpose.
+- **Tied to real usage, not a timer**: it fires automatically once per Stop
+  hook event (edge-triggered on the state file's `status` transitioning to
+  `"done"` — see `_refresh()` in `extension.js`), plus on manual click as an
+  override. There is no interval timer and no menu-open auto-refresh. Now
+  that the call costs no quota, this cadence is a network-disclosure
+  discipline choice (predictable, tied to real activity) rather than a
+  cost-avoidance one — revisit if a more frequent cadence turns out to be
+  worth the tradeoff.
 - **Single fixed endpoint**: only ever talks to
-  `https://api.anthropic.com/v1/messages`. No user-configurable host, so
+  `https://api.anthropic.com/api/oauth/usage`. No user-configurable host, so
   the token can't be exfiltrated to an arbitrary destination via config.
 - **Token never touches state.json or any file the extension writes** — it
   is read from `TOKEN_PATH` and held only in memory for the life of one
