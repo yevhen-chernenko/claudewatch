@@ -325,7 +325,17 @@ export default class CodeWatchExtension extends Extension {
     this._label.opacity = 255;
     this._pulseDim = false;
     this._pulseLoop();
-    Main.notify("CodeWatch", WAITING_TEXT);
+    this._notify(WAITING_TEXT, "dialog-question");
+  }
+
+  // Desktop notification paired with a themed system sound — every waiting/
+  // complete transition fires both together. Uses the shell's own sound
+  // player (same mechanism as the screenshot/volume sounds) rather than
+  // spawning a subprocess, and resolves soundName against the user's
+  // current sound theme rather than shipping an audio file.
+  _notify(text, soundName) {
+    Main.notify("CodeWatch", text);
+    global.display.get_sound_player().play_from_theme(soundName, text, null);
   }
 
   _pulseLoop() {
@@ -357,7 +367,7 @@ export default class CodeWatchExtension extends Extension {
     this._label.opacity = 255;
     this._label.style = COMPLETE_STYLE;
     this._label.set_text(COMPLETE_TEXT);
-    Main.notify("CodeWatch", COMPLETE_TEXT);
+    this._notify(COMPLETE_TEXT, "complete");
     this._flashTimeoutId = GLib.timeout_add(
       GLib.PRIORITY_DEFAULT,
       COMPLETE_FLASH_MS,
