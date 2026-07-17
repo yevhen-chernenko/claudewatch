@@ -15,6 +15,8 @@ const statePath = path.join(stateDir, "state.json");
 
 const STATUS_BY_EVENT = {
   UserPromptSubmit: "running",
+  Notification: "waiting_approval",
+  PermissionRequest: "waiting_approval",
   Stop: "done",
 };
 

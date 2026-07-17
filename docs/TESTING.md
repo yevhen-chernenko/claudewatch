@@ -14,16 +14,19 @@ The shell only picks up `extension.js` changes on reload, not live:
 
 ## Drive the hook handler directly
 
-Simulates the two wired events without needing a real Claude Code turn.
-Watch the panel label after each command — it updates within ~1s via the
+Simulates the wired events without needing a real Claude Code turn. Watch
+the panel label after each command — it updates within ~1s via the
 `Gio.FileMonitor` in `extension.js`, no reload needed.
 
 ```sh
 echo '{"hook_event_name":"UserPromptSubmit"}' | node hooks/hook-handler.js
-# panel -> "Task is running…"
+# panel -> "Claude is working…" (orange, pulsing)
+
+echo '{"hook_event_name":"Notification"}' | node hooks/hook-handler.js
+# panel -> "Claude Wants Something!" (blue, pulsing twice as fast)
 
 echo '{"hook_event_name":"Stop"}' | node hooks/hook-handler.js
-# panel -> "Task complete!"
+# panel -> "Task complete!" (green flash, then standby after 5s)
 ```
 
 Inspect the state file directly if the panel doesn't move:

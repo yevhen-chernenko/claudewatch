@@ -30,19 +30,26 @@ const TOKEN_PATH = GLib.build_filenamev([
 // API quota, unlike a Messages completion call.
 const RATE_LIMIT_URL = "https://api.anthropic.com/api/oauth/usage";
 
-// The panel label's three states: idle ("standby", also where it lands 5s
-// after a task finishes), a task in flight ("running", pulsing orange), and
-// the 5s green flash right after a task finishes ("complete").
-const STANDBY_TEXT = "ClaudeWatch";
+// The panel label's four states: idle ("standby", also where it lands 5s
+// after a task finishes), a task in flight ("running", pulsing orange), the
+// task paused on a permission prompt or question ("waiting", pulsing blue at
+// twice the running rate so it reads as more urgent), and the 5s green flash
+// right after a task finishes ("complete").
+const STANDBY_TEXT = "Claude is resting.";
 const RUNNING_TEXT = "Claude is working…";
-const COMPLETE_TEXT = "Task complete!";
+const WAITING_TEXT = "Claude wants something!";
+const COMPLETE_TEXT = "Claude is done!";
 
 const STANDBY_STYLE = "padding: 0 6px;";
 const RUNNING_STYLE =
   "padding: 0 6px; background-color: #e67e22; border-radius: 4px;";
+const WAITING_STYLE =
+  "padding: 0 6px; background-color: #3498db; border-radius: 4px;";
 const COMPLETE_STYLE =
   "padding: 0 6px; background-color: #2ecc71; border-radius: 4px;";
 const COMPLETE_FLASH_MS = 5000;
+const RUNNING_PULSE_MS = 1200;
+const WAITING_PULSE_MS = 600;
 
 function formatTokenCount(n) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -102,6 +109,36 @@ function formatRateLimitWindow(window, label) {
     ? ` (resets ${formatResetTime(window.resets_at)})`
     : "";
   return `${label} ${percent}%${resetText}`;
+}
+
+// Pure edge-detection: decides which _enter* transition (if any) a refresh
+// should perform, given the freshly-read status, the previously-seen status,
+// and whether this is the very first refresh after enable(). Kept separate
+// from _refresh() so the state-machine logic can be read (and reasoned
+// about) without the async file-read wrapped around it.
+//
+// The first refresh after enable() is not an edge: state.json can still
+// hold a leftover status from before the shell reload (most commonly
+// "done", its natural resting state), and treating that as a fresh
+// transition would replay the complete flash or waiting pulse on startup
+// instead of just syncing straight to the current state.
+function resolveUiAction(status, previousStatus, isInitialRefresh) {
+  if (isInitialRefresh) {
+    if (status === "running") return "running";
+    if (status === "waiting_approval") return "waiting";
+    return "standby";
+  }
+  if (status === "running" && previousStatus !== "running") return "running";
+  if (status === "waiting_approval" && previousStatus !== "waiting_approval")
+    return "waiting";
+  if (status === "done" && previousStatus !== "done") return "complete";
+  if (
+    status !== "running" &&
+    status !== "waiting_approval" &&
+    status !== "done"
+  )
+    return "standby";
+  return null;
 }
 
 export default class CodeWatchExtension extends Extension {
@@ -216,42 +253,19 @@ export default class CodeWatchExtension extends Extension {
       // from this._uiState (set by the _enter* methods below), not
       // directly from the raw hook status — that's what lets the 5s
       // post-completion timer fall back to "Standby" on its own even
-      // though the state file still says status: "done".
-      //
-      // The very first refresh after enable() is not an edge: state.json
-      // can still say status: "done" from before the shell reload, and
-      // treating that as a fresh completion would replay the green flash
-      // on startup instead of landing on standby (or, for a leftover
-      // "running" status, on the pulsing running state with no edge to
-      // trigger it).
-      let justCompleted = false;
-      if (!this._initialRefreshDone) {
-        this._initialRefreshDone = true;
-        if (this._state.status === "running") {
-          this._enterRunning();
-        } else {
-          this._enterStandby();
-        }
-      } else {
-        const previousStatus = this._lastStatus;
-        const justStarted =
-          this._state.status === "running" && previousStatus !== "running";
-        justCompleted =
-          this._state.status === "done" && previousStatus !== "done";
-
-        if (justStarted) {
-          this._enterRunning();
-        } else if (justCompleted) {
-          this._enterComplete();
-        } else if (
-          this._state.status !== "running" &&
-          this._state.status !== "done"
-        ) {
-          // No task in flight and no recent completion (e.g. a
-          // malformed/reset state file) — idle.
-          this._enterStandby();
-        }
-      }
+      // though the state file still says status: "done". See
+      // resolveUiAction() for the transition rules themselves.
+      const action = resolveUiAction(
+        this._state.status,
+        this._lastStatus,
+        !this._initialRefreshDone,
+      );
+      this._initialRefreshDone = true;
+      if (action === "running") this._enterRunning();
+      else if (action === "waiting") this._enterWaiting();
+      else if (action === "complete") this._enterComplete();
+      else if (action === "standby") this._enterStandby();
+      const justCompleted = action === "complete";
       this._lastStatus = this._state.status;
       // Gated on the Auto-refresh toggle (default off) so a manual "Refresh
       // Usage" click is the only rate-limit request by default — see
@@ -294,12 +308,33 @@ export default class CodeWatchExtension extends Extension {
     this._pulseLoop();
   }
 
+  // Paused-on-prompt state: Claude stopped to ask for a permission or a
+  // question and is waiting on the user. Same pulse as _enterRunning() but
+  // blue and twice as fast, so it reads as more urgent than plain progress.
+  _enterWaiting() {
+    this._uiState = "waiting";
+    if (this._flashTimeoutId) {
+      GLib.source_remove(this._flashTimeoutId);
+      this._flashTimeoutId = null;
+    }
+    if (!this._label) return;
+    this._label.style = WAITING_STYLE;
+    this._label.set_text(WAITING_TEXT);
+    this._label.opacity = 255;
+    this._pulseDim = false;
+    this._pulseLoop();
+  }
+
   _pulseLoop() {
-    if (!this._label || this._uiState !== "running") return;
+    if (!this._label) return;
+    let pulseDuration = null;
+    if (this._uiState === "running") pulseDuration = RUNNING_PULSE_MS;
+    else if (this._uiState === "waiting") pulseDuration = WAITING_PULSE_MS;
+    if (!pulseDuration) return;
     this._pulseDim = !this._pulseDim;
     this._label.ease({
       opacity: this._pulseDim ? 120 : 255,
-      duration: 1200,
+      duration: pulseDuration,
       mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
       onComplete: () => this._pulseLoop(),
     });
