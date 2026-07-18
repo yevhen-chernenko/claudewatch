@@ -123,6 +123,16 @@ export class ClaudeWatchIndicator {
     });
     this.button.menu.addMenuItem(this._autoRefreshItem);
 
+    this._notificationsEnabled = false;
+    this._notificationsItem = new PopupMenu.PopupSwitchMenuItem(
+      "Notifications",
+      false,
+    );
+    this._notificationsItem.connect("toggled", (item, state) => {
+      this._notificationsEnabled = state;
+    });
+    this.button.menu.addMenuItem(this._notificationsItem);
+
     this._refreshUsageItem = new PopupMenu.PopupMenuItem("Refresh Usage");
     // Default activate() chains to super.activate(), which PopupMenu treats
     // as a close-triggering click; override so clicking never closes the
@@ -242,8 +252,10 @@ export class ClaudeWatchIndicator {
   // complete transition fires both together. Uses the shell's own sound
   // player (same mechanism as the screenshot/volume sounds) rather than
   // spawning a subprocess, and resolves soundName against the user's
-  // current sound theme rather than shipping an audio file.
+  // current sound theme rather than shipping an audio file. No-op unless
+  // the "Notifications" toggle is on (default off).
   _notify(text, soundName) {
+    if (!this._notificationsEnabled) return;
     Main.notify("ClaudeWatch", text);
     global.display.get_sound_player().play_from_theme(soundName, text, null);
   }
