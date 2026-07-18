@@ -41,6 +41,45 @@ echo '{"hook_event_name":"PreToolUse"}' | node dist/hooks/hook-handler.js
 # waiting -> running edge fires once a permission prompt is answered and
 # tool execution resumes, instead of staying blue until Stop
 
+echo '{"hook_event_name":"PreCompact","trigger":"manual"}' | node dist/hooks/hook-handler.js
+# panel -> "Agent <name> is gearing up" (purple, pulsing) — manual /compact
+
+echo '{"hook_event_name":"PreCompact","trigger":"auto"}' | node dist/hooks/hook-handler.js
+# no-op: status file is untouched, panel doesn't move — auto-compact isn't
+# surfaced as its own state
+
+echo '{"hook_event_name":"PreCompact","trigger":"manual"}' | node dist/hooks/hook-handler.js
+# panel -> compacting (purple) again. This state file has no transcript_path,
+# so _watchTranscriptForCompactOutcome() has nothing to tail and only the
+# COMPACTING_STALE_MS fallback applies here — leave it alone and wait ~3
+# minutes without firing any other hook, simulating a cancelled /compact.
+# Confirms the timeout self-heal: panel should fall back to standby on its
+# own without a state.json write forcing it. To test the timeout itself
+# instead of trusting the 3-minute wait, temporarily lower COMPACTING_STALE_MS
+# in lib/indicator.ts, rebuild, and repeat.
+
+# To test the fast path instead (_watchTranscriptForCompactOutcome), point
+# a state file at a throwaway transcript file — NOT a real one under
+# ~/.claude/projects/, so there's no risk of corrupting actual session data:
+FAKE_TRANSCRIPT=/tmp/claudewatch-fake-transcript.jsonl
+echo '{"type":"user","message":{"role":"user","content":"hi"}}' > "$FAKE_TRANSCRIPT"
+cat > "${XDG_STATE_HOME:-$HOME/.local/state}/claudewatch/state.json" <<EOF
+{
+  "status": "compacting",
+  "updated_at": "$(date -Iseconds)",
+  "transcript_path": "$FAKE_TRANSCRIPT"
+}
+EOF
+# panel -> compacting (purple). Then append one of the two outcome markers
+# Claude Code itself writes on a real /compact, and confirm the panel drops
+# to standby within a second or two — well before the 3-minute fallback:
+echo '{"type":"system","subtype":"compact_boundary","content":"Conversation compacted"}' \
+  >> "$FAKE_TRANSCRIPT"
+# (repeat the state.json step above and use this line instead to test the
+# cancel marker:)
+echo '{"type":"system","subtype":"local_command","content":"<local-command-stderr>AbortError: Compaction canceled.</local-command-stderr>"}' \
+  >> "$FAKE_TRANSCRIPT"
+
 echo '{"hook_event_name":"Stop"}' | node dist/hooks/hook-handler.js
 # panel -> "Claude is done!" (green flash, then standby after 5s)
 # also fires a desktop notification plus a "complete" themed system sound

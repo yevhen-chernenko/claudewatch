@@ -14,15 +14,36 @@ activity, read from a JSON state file written by the compiled
 ${XDG_STATE_HOME:-~/.local/state}/claudewatch/state.json
 ```
 
-Four states: idle (**standby**, plain label — also where it lands 5s after a
+Five states: idle (**standby**, plain label — also where it lands 5s after a
 task finishes), a task in flight (**running**, pulsing orange), paused on a
 permission prompt or question (**waiting**, pulsing blue at twice the running
-rate so it reads as more urgent), and the 5s flash right after a task
-finishes (**complete**, green). Entering **waiting** or **complete** also
-fires a desktop notification (`Main.notify`) paired with a themed system
-sound (`dialog-question` / `complete`) — see `_notify()` in
+rate so it reads as more urgent), a manual `/compact` in progress
+(**compacting**, pulsing purple at the same rate as running), and the 5s
+flash right after a task finishes (**complete**, green). Entering **waiting**
+or **complete** also fires a desktop notification (`Main.notify`) paired with
+a themed system sound (`dialog-question` / `complete`) — see `_notify()` in
 [lib/indicator.ts](../src/extension/lib/indicator.ts) — since the panel alone
-is easy to miss.
+is easy to miss. **compacting** doesn't notify: it's Claude pausing to
+summarize its own transcript, not asking the user for anything, and an
+auto-triggered compaction (context window filling up mid-task) is treated as
+an implementation detail of the running task rather than its own state — see
+the `PreCompact`/`trigger` handling in
+[hooks/hook-handler.ts](../src/hooks/hook-handler.ts).
+
+Claude Code fires no hook at all when a manual `/compact` is cancelled
+mid-flight (only a *completed* compaction ever produces another state.json
+write), so without help the panel would be stuck purple forever after a
+cancel. `_watchTranscriptForCompactOutcome()` in
+[lib/indicator.ts](../src/extension/lib/indicator.ts) tails the session
+transcript directly for the two markers Claude Code writes there regardless
+of any hook: a `{"type":"system","subtype":"compact_boundary",...}` entry on
+a real completion, or a `local_command` entry containing `"AbortError:
+Compaction canceled."` on a cancel — reacting within a file-monitor tick
+either way. `_armCompactingTimeout()` is the fallback behind that fast path
+(missing `transcript_path`, or Claude Code changing what it writes there):
+it bounds `compacting` the same way `COMPLETE_FLASH_MS` bounds the
+**complete** flash — if nothing moves the status past `compacting` within
+`COMPACTING_STALE_MS` (3 minutes), it falls back to standby on its own.
 
 ## File layout
 

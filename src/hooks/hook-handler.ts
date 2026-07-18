@@ -11,7 +11,7 @@ const stateDir = path.join(
 );
 const statePath = path.join(stateDir, "state.json");
 
-type SessionStatus = "running" | "waiting_approval" | "done";
+type SessionStatus = "running" | "waiting_approval" | "done" | "compacting";
 
 const STATUS_BY_EVENT: Record<string, SessionStatus> = {
   UserPromptSubmit: "running",
@@ -26,10 +26,20 @@ interface HookInput {
   hook_event_name?: string;
   cwd?: string;
   transcript_path?: string;
+  // Only present on PreCompact; "manual" for /compact, "auto" when the
+  // context window fills up on its own. Only the former gets its own status
+  // — an auto-compact is an implementation detail of an already-running
+  // session, not something worth surfacing in the panel.
+  trigger?: string;
 }
 
 const input = JSON.parse(fs.readFileSync(0, "utf-8")) as HookInput;
-const status = input.hook_event_name ? STATUS_BY_EVENT[input.hook_event_name] : undefined;
+let status: SessionStatus | undefined;
+if (input.hook_event_name === "PreCompact") {
+  if (input.trigger === "manual") status = "compacting";
+} else if (input.hook_event_name) {
+  status = STATUS_BY_EVENT[input.hook_event_name];
+}
 
 if (status) {
   fs.mkdirSync(stateDir, { recursive: true });

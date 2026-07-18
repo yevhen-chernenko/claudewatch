@@ -19,24 +19,48 @@ export interface SessionState {
   pid?: number;
 }
 
-export type UiAction = "running" | "waiting" | "complete" | "standby" | null;
+export type UiAction =
+  | "running"
+  | "waiting"
+  | "complete"
+  | "standby"
+  | "compacting"
+  | null;
 
-// A "running"/"waiting_approval" status only means something while the
-// session that wrote it is still alive — otherwise it's leftover from one
-// that ended without ever reaching "done" (killed terminal, crash, machine
-// sleep) and shouldn't be trusted. "done" doesn't need this: resolveUiAction
-// already treats any non-running/waiting status as standby on the initial
-// refresh. Takes the liveness check as a plain boolean (rather than doing
-// the /proc lookup itself) so this stays pure and testable like
-// resolveUiAction below.
+// A "running"/"waiting_approval"/"compacting" status only means something
+// while the session that wrote it is still alive — otherwise it's leftover
+// from one that ended without ever reaching "done" (killed terminal, crash,
+// machine sleep) and shouldn't be trusted. "done" doesn't need this:
+// resolveUiAction already treats any non-running/waiting/compacting status as
+// standby on the initial refresh. Takes the liveness check as a plain
+// boolean (rather than doing the /proc lookup itself) so this stays pure and
+// testable like resolveUiAction below.
 export function deriveEffectiveStatus(
   status: string | undefined,
   isSessionAlive: boolean,
 ): string | undefined {
   if (isSessionAlive) return status;
-  if (status === "running" || status === "waiting_approval") return undefined;
+  if (
+    status === "running" ||
+    status === "waiting_approval" ||
+    status === "compacting"
+  )
+    return undefined;
   return status;
 }
+
+// The UI action a "live" status (one only meaningful while the session is
+// actively in that phase) maps to. "done" is deliberately excluded — it's
+// handled as its own edge below since it maps to "complete" rather than a
+// same-named action.
+const ACTIVE_STATUS_ACTION: Record<
+  string,
+  Exclude<UiAction, "complete" | "standby" | null>
+> = {
+  running: "running",
+  waiting_approval: "waiting",
+  compacting: "compacting",
+};
 
 // Pure edge-detection: decides which _enter* transition (if any) a refresh
 // should perform, given the freshly-read status, the previously-seen status,
@@ -54,20 +78,10 @@ export function resolveUiAction(
   previousStatus: string | null | undefined,
   isInitialRefresh: boolean,
 ): UiAction {
-  if (isInitialRefresh) {
-    if (status === "running") return "running";
-    if (status === "waiting_approval") return "waiting";
-    return "standby";
-  }
-  if (status === "running" && previousStatus !== "running") return "running";
-  if (status === "waiting_approval" && previousStatus !== "waiting_approval")
-    return "waiting";
+  const activeAction = status ? ACTIVE_STATUS_ACTION[status] : undefined;
+  if (isInitialRefresh) return activeAction ?? "standby";
+  if (activeAction && status !== previousStatus) return activeAction;
   if (status === "done" && previousStatus !== "done") return "complete";
-  if (
-    status !== "running" &&
-    status !== "waiting_approval" &&
-    status !== "done"
-  )
-    return "standby";
+  if (!activeAction && status !== "done") return "standby";
   return null;
 }

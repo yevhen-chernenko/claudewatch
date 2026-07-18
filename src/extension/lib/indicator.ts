@@ -23,11 +23,12 @@ import {
   resolveToken,
 } from "./rateLimit.js";
 
-// The panel label's four states: idle ("standby", also where it lands 5s
+// The panel label's five states: idle ("standby", also where it lands 5s
 // after a task finishes), a task in flight ("running", pulsing orange), the
 // task paused on a permission prompt or question ("waiting", pulsing blue at
-// twice the running rate so it reads as more urgent), and the 5s green flash
-// right after a task finishes ("complete").
+// twice the running rate so it reads as more urgent), a manual /compact in
+// progress ("compacting", pulsing purple at the same rate as running), and
+// the 5s green flash right after a task finishes ("complete").
 const STANDBY_TEXT = "All clear 👀"; // not colored
 
 // Picked once per run (on the standby -> running transition) and reused for
@@ -50,6 +51,7 @@ const AGENT_NAMES = [
 const runningText = (name: string) => `Agent ${name} is working 🕶️`; // orange mode
 const waitingText = (name: string) => `Agent ${name} needs support 📞`; // blue mode
 const completeText = (name: string) => `Agent ${name} is done 🎖️`; // green mode
+const COMPACTING_TEXT = "Agents are training 🔫"; // purple mode; no agent name — it isn't retained into the next session
 
 const STANDBY_STYLE = "padding: 0 6px;";
 const RUNNING_STYLE =
@@ -58,11 +60,31 @@ const WAITING_STYLE =
   "padding: 0 6px; background-color: #3498db; border-radius: 4px;";
 const COMPLETE_STYLE =
   "padding: 0 6px; background-color: #2ecc71; border-radius: 4px;";
+const COMPACTING_STYLE =
+  "padding: 0 6px; background-color: #9b59b6; border-radius: 4px;";
 const COMPLETE_FLASH_MS = 5000;
 const RUNNING_PULSE_MS = 1200;
 const WAITING_PULSE_MS = 600;
+const COMPACTING_PULSE_MS = 1200;
+// Claude Code only writes a hook-triggered state.json update for a
+// *completed* compaction (PreCompact then, eventually, some later event once
+// the session resumes) — cancelling a manual /compact mid-flight fires no
+// hook at all, so the file monitor never wakes applyState() back up on its
+// own. _watchTranscriptForCompactOutcome() below tails the session
+// transcript directly for the two markers Claude Code actually writes
+// there — a `{"type":"system","subtype":"compact_boundary",...}` entry on a
+// real completion, or a local_command entry containing "AbortError:
+// Compaction canceled." on a cancel — and reacts within a file-monitor tick
+// either way, so this timeout is normally not what the user waits on. It's
+// the fallback behind that fast path: if transcript_path is missing or
+// those markers ever change shape, this still bounds "compacting" the same
+// way COMPLETE_FLASH_MS bounds "complete", so the panel can't get stuck
+// purple forever. Generous relative to how long even a large-transcript
+// compaction realistically takes, so it shouldn't cut a genuine one off
+// mid-flight.
+const COMPACTING_STALE_MS = 3 * 60 * 1000;
 
-type UiState = "standby" | "running" | "waiting" | "complete";
+type UiState = "standby" | "running" | "waiting" | "complete" | "compacting";
 
 // Two real GNOME Shell APIs the community @girs types don't model: Actor's
 // `ease()` is JS-side sugar from environment.js (not GIR-introspected, so
@@ -136,6 +158,12 @@ export class ClaudeWatchIndicator {
   private _autoRefreshOnDone = false;
   private _notificationsEnabled = false;
   private _flashTimeoutId: number | null = null;
+  private _compactingTimeoutId: number | null = null;
+  private _transcriptMonitor: InstanceType<typeof Gio.FileMonitor> | null =
+    null;
+  private _transcriptMonitorId: number | null = null;
+  private _transcriptWatchFile: InstanceType<typeof Gio.File> | null = null;
+  private _transcriptWatchStartLength = 0;
   private _pulseDim = false;
   private _uiState: UiState = "standby";
   private _state: SessionState = {};
@@ -279,8 +307,21 @@ export class ClaudeWatchIndicator {
     this._initialRefreshDone = true;
     if (action === "running") this._enterRunning();
     else if (action === "waiting") this._enterWaiting();
+    else if (action === "compacting") this._enterCompacting();
     else if (action === "complete") this._enterComplete();
     else if (action === "standby") this._enterStandby();
+    // Re-armed on every refresh that still reports "compacting" — not just
+    // the initial transition into it — so a /compact retried after a
+    // cancelled one (same status both times, so `action` above is null and
+    // _enterCompacting() doesn't re-fire) still gets both self-heal paths
+    // reset instead of being timed/watched from the first, aborted attempt.
+    if (status === "compacting") {
+      this._armCompactingTimeout();
+      this._watchTranscriptForCompactOutcome();
+    } else {
+      this._clearCompactingTimeout();
+      this._stopWatchingTranscript();
+    }
     const justCompleted = action === "complete";
     this._lastStatus = status ?? null;
     // Gated on the Auto-refresh toggle (default off) so a manual "Refresh
@@ -300,6 +341,18 @@ export class ClaudeWatchIndicator {
       GLib.source_remove(this._flashTimeoutId);
       this._flashTimeoutId = null;
     }
+    // Whichever compacting self-heal path (timeout or transcript marker)
+    // got us here, the other one is now stale — always tear down both so
+    // entering standby is a clean terminal action regardless of trigger.
+    this._clearCompactingTimeout();
+    this._stopWatchingTranscript();
+    // Both self-heal paths call this directly, outside applyState(), so
+    // _lastStatus never sees the drop out of "compacting" — without this,
+    // a retried /compact writes the same "compacting" status again,
+    // resolveUiAction() sees no edge, and the panel never re-enters
+    // compacting. applyState()'s own standby transition harmlessly
+    // overwrites this again right after with the real current status.
+    this._lastStatus = null;
     this._label.opacity = 255;
     this._label.style = STANDBY_STYLE;
     this._label.set_text(STANDBY_TEXT);
@@ -351,6 +404,135 @@ export class ClaudeWatchIndicator {
     this._notify(text, "dialog-question");
   }
 
+  // Manual /compact in progress: Claude paused to summarize its own
+  // transcript, not to ask the user anything, so this doesn't fire a
+  // notification the way _enterWaiting() does — same pulse cadence as
+  // _enterRunning(), just purple, since it's progress rather than a block.
+  private _enterCompacting(): void {
+    this._uiState = "compacting";
+    if (this._flashTimeoutId) {
+      GLib.source_remove(this._flashTimeoutId);
+      this._flashTimeoutId = null;
+    }
+    this._label.style = COMPACTING_STYLE;
+    this._label.set_text(COMPACTING_TEXT);
+    this._label.opacity = 255;
+    this._pulseDim = false;
+    this._pulseLoop();
+  }
+
+  // See COMPACTING_STALE_MS above: the self-heal for a cancelled /compact,
+  // since Claude Code fires no hook at all when one is aborted mid-flight.
+  private _armCompactingTimeout(): void {
+    this._clearCompactingTimeout();
+    this._compactingTimeoutId = GLib.timeout_add(
+      GLib.PRIORITY_DEFAULT,
+      COMPACTING_STALE_MS,
+      () => {
+        this._compactingTimeoutId = null;
+        if (this._uiState === "compacting") this._enterStandby();
+        return GLib.SOURCE_REMOVE;
+      },
+    );
+  }
+
+  private _clearCompactingTimeout(): void {
+    if (this._compactingTimeoutId) {
+      GLib.source_remove(this._compactingTimeoutId);
+      this._compactingTimeoutId = null;
+    }
+  }
+
+  // Fast path for the same problem COMPACTING_STALE_MS guards against:
+  // tails the session transcript from its current length (so a leftover
+  // marker from an earlier /compact attempt earlier in the same file can't
+  // false-trigger this one) for either outcome marker Claude Code actually
+  // writes — a compact_boundary system entry on success, or a local_command
+  // entry containing "AbortError: Compaction canceled." on a cancel — and
+  // reacts immediately instead of waiting for the fallback timeout.
+  // Best-effort: if transcript_path is missing, or the markers never show
+  // up, COMPACTING_STALE_MS still catches it.
+  private _watchTranscriptForCompactOutcome(): void {
+    const transcriptPath = this._state.transcript_path;
+    if (!transcriptPath) {
+      this._stopWatchingTranscript();
+      return;
+    }
+    const file = Gio.File.new_for_path(transcriptPath);
+    file.load_contents_async(null, (_file, result) => {
+      let startLength = 0;
+      try {
+        const [, contents] = file.load_contents_finish(result);
+        startLength = new TextDecoder().decode(contents).length;
+      } catch {
+        // Transcript not there yet — watch from the start so nothing
+        // already-written can hide a fresh marker.
+      }
+      // The UI may have already moved on (timeout fired first, or a fresh
+      // status update landed) while this async read was in flight.
+      if (this._uiState !== "compacting") return;
+      this._stopWatchingTranscript();
+      this._transcriptWatchStartLength = startLength;
+      this._transcriptWatchFile = file;
+      this._transcriptMonitor = file.monitor_file(
+        Gio.FileMonitorFlags.NONE,
+        null,
+      );
+      this._transcriptMonitorId = this._transcriptMonitor.connect(
+        "changed",
+        () => this._checkTranscriptForCompactOutcome(),
+      );
+    });
+  }
+
+  private _checkTranscriptForCompactOutcome(): void {
+    const file = this._transcriptWatchFile;
+    if (!file || this._uiState !== "compacting") return;
+    file.load_contents_async(null, (_file, result) => {
+      // A newer watch may have started (different file/offset) while this
+      // read was in flight — don't act on data that no longer applies.
+      if (this._uiState !== "compacting" || this._transcriptWatchFile !== file)
+        return;
+      let contents: string;
+      try {
+        const [, bytes] = file.load_contents_finish(result);
+        contents = new TextDecoder().decode(bytes);
+      } catch {
+        return; // Mid-write; the next "changed" event retries.
+      }
+      if (contents.length <= this._transcriptWatchStartLength) return;
+      const appended = contents.slice(this._transcriptWatchStartLength);
+      for (const line of appended.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let entry: { type?: string; subtype?: string; content?: unknown };
+        try {
+          entry = JSON.parse(trimmed);
+        } catch {
+          continue; // Partial line mid-write; keep waiting.
+        }
+        if (entry.type !== "system") continue;
+        const isAbort =
+          entry.subtype === "local_command" &&
+          typeof entry.content === "string" &&
+          entry.content.includes("AbortError: Compaction canceled.");
+        if (entry.subtype === "compact_boundary" || isAbort) {
+          this._enterStandby();
+          return;
+        }
+      }
+    });
+  }
+
+  private _stopWatchingTranscript(): void {
+    if (this._transcriptMonitor && this._transcriptMonitorId) {
+      this._transcriptMonitor.disconnect(this._transcriptMonitorId);
+    }
+    this._transcriptMonitor = null;
+    this._transcriptMonitorId = null;
+    this._transcriptWatchFile = null;
+  }
+
   // Desktop notification paired with a themed system sound — every waiting/
   // complete transition fires both together. Uses the shell's own sound
   // player (same mechanism as the screenshot/volume sounds) rather than
@@ -367,6 +549,8 @@ export class ClaudeWatchIndicator {
     let pulseDuration: number | null = null;
     if (this._uiState === "running") pulseDuration = RUNNING_PULSE_MS;
     else if (this._uiState === "waiting") pulseDuration = WAITING_PULSE_MS;
+    else if (this._uiState === "compacting")
+      pulseDuration = COMPACTING_PULSE_MS;
     if (!pulseDuration) return;
     this._pulseDim = !this._pulseDim;
     (this._label as unknown as Easeable).ease({
@@ -572,6 +756,8 @@ export class ClaudeWatchIndicator {
       GLib.source_remove(this._flashTimeoutId);
       this._flashTimeoutId = null;
     }
+    this._clearCompactingTimeout();
+    this._stopWatchingTranscript();
     this._label.remove_all_transitions();
     this._menu.disconnect(this._menuOpenStateId);
     // Nothing reads `button`/`_httpSession` after this call (extension.js
