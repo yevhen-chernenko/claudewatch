@@ -5,22 +5,13 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
+import { resolveStatus } from "./lib/status";
+
 const stateDir = path.join(
   process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"),
   "claudewatch",
 );
 const sessionsDir = path.join(stateDir, "sessions");
-
-type SessionStatus = "running" | "waiting_approval" | "done" | "compacting";
-
-const STATUS_BY_EVENT: Record<string, SessionStatus> = {
-  UserPromptSubmit: "running",
-  PreToolUse: "running",
-  PostToolUse: "running",
-  Notification: "waiting_approval",
-  PermissionRequest: "waiting_approval",
-  Stop: "done",
-};
 
 interface HookInput {
   hook_event_name?: string;
@@ -51,12 +42,7 @@ if (input.hook_event_name === "SessionEnd") {
   process.exit(0);
 }
 
-let status: SessionStatus | undefined;
-if (input.hook_event_name === "PreCompact") {
-  if (input.trigger === "manual") status = "compacting";
-} else if (input.hook_event_name) {
-  status = STATUS_BY_EVENT[input.hook_event_name];
-}
+const status = resolveStatus(input.hook_event_name, input.trigger);
 
 if (status) {
   fs.mkdirSync(sessionsDir, { recursive: true });

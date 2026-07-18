@@ -3,12 +3,13 @@
   "compilerOptions": {
     "composite": true,
     "target": "es2022",
-    "module": "commonjs",
-    "moduleResolution": "node10",
+    "module": "node16",
+    "moduleResolution": "node16",
     "lib": ["es2022"],
     "types": ["node"],
     "rootDir": "src/hooks",
     "outDir": "dist/hooks"
   },
-  "include": ["src/hooks/**/*.ts"]
+  "include": ["src/hooks/**/*.ts"],
+  "exclude": ["src/hooks/**/*.test.ts"]
 }

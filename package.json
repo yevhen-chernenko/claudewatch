@@ -6,7 +6,8 @@
     "build:extension": "tsc -p tsconfig.extension.json",
     "build:hooks": "tsc -p tsconfig.hooks.json",
     "copy:assets": "node scripts/copy-assets.mjs",
-    "typecheck": "tsc -p tsconfig.extension.json --noEmit && tsc -p tsconfig.hooks.json --noEmit",
+    "typecheck": "tsc -p tsconfig.extension.json --noEmit && tsc -p tsconfig.hooks.json --noEmit && tsc -p tsconfig.vitest.json --noEmit",
+    "test": "vitest run",
     "clean": "rm -rf dist"
   },
   "devDependencies": {
@@ -15,7 +16,8 @@
     "@girs/pango-1.0": "4.1.0",
     "@girs/soup-3.0": "4.1.0",
     "@types/node": "^22.13.0",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^4.1.10"
   },
   "overrides": {
     "@girs/gio-2.0": "4.1.0",
