@@ -10,7 +10,7 @@ import * as Main from "resource:///org/gnome/shell/ui/main.js";
 import * as PanelMenu from "resource:///org/gnome/shell/ui/panelMenu.js";
 import * as PopupMenu from "resource:///org/gnome/shell/ui/popupMenu.js";
 
-import { resolveUiAction, type SessionState } from "./state.js";
+import { resolveUiAction, deriveEffectiveStatus, type SessionState } from "./state.js";
 import { summarizeUsage } from "./usage.js";
 import {
   TOKEN_PATH,
@@ -24,10 +24,10 @@ import {
 // task paused on a permission prompt or question ("waiting", pulsing blue at
 // twice the running rate so it reads as more urgent), and the 5s green flash
 // right after a task finishes ("complete").
-const STANDBY_TEXT = "Claude is resting...";
-const RUNNING_TEXT = "Claude is working...";
-const WAITING_TEXT = "Claude wants something!";
-const COMPLETE_TEXT = "Claude is done!";
+const STANDBY_TEXT = "Agent is resting"; // not colored
+const RUNNING_TEXT = "Agent is working"; // orange mode
+const WAITING_TEXT = "Agent needs support"; // blue mode
+const COMPLETE_TEXT = "Agent is done"; // green mode
 
 const STANDBY_STYLE = "padding: 0 6px;";
 const RUNNING_STYLE =
@@ -84,13 +84,27 @@ export class ClaudeWatchIndicator {
   // it's always a real PopupMenu here since we pass `false` below.
   private readonly _menu: PopupMenu.PopupMenu;
 
-  private readonly _openInCodeItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
-  private readonly _usageLabelItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
-  private readonly _rateLimit5hItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
-  private readonly _rateLimit7dItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
-  private readonly _autoRefreshItem: InstanceType<typeof PopupMenu.PopupSwitchMenuItem>;
-  private readonly _notificationsItem: InstanceType<typeof PopupMenu.PopupSwitchMenuItem>;
-  private readonly _refreshUsageItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
+  private readonly _openInCodeItem: InstanceType<
+    typeof PopupMenu.PopupMenuItem
+  >;
+  private readonly _usageLabelItem: InstanceType<
+    typeof PopupMenu.PopupMenuItem
+  >;
+  private readonly _rateLimit5hItem: InstanceType<
+    typeof PopupMenu.PopupMenuItem
+  >;
+  private readonly _rateLimit7dItem: InstanceType<
+    typeof PopupMenu.PopupMenuItem
+  >;
+  private readonly _autoRefreshItem: InstanceType<
+    typeof PopupMenu.PopupSwitchMenuItem
+  >;
+  private readonly _notificationsItem: InstanceType<
+    typeof PopupMenu.PopupSwitchMenuItem
+  >;
+  private readonly _refreshUsageItem: InstanceType<
+    typeof PopupMenu.PopupMenuItem
+  >;
   private readonly _exitItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
   private readonly _menuOpenStateId: number;
 
@@ -137,7 +151,9 @@ export class ClaudeWatchIndicator {
     this._openInCodeItem.connect("activate", () => this._openInVsCode());
     this._menu.addMenuItem(this._openInCodeItem);
 
-    this._menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem("Claude Usage"));
+    this._menu.addMenuItem(
+      new PopupMenu.PopupSeparatorMenuItem("Claude Usage"),
+    );
 
     this._usageLabelItem = new PopupMenu.PopupMenuItem("", {
       reactive: false,
@@ -201,12 +217,11 @@ export class ClaudeWatchIndicator {
     this._exitItem.connect("activate", () => this._onExit());
     this._menu.addMenuItem(this._exitItem);
 
-    this._menuOpenStateId = (this._menu as unknown as MenuWithOpenStateSignal).connect(
-      "open-state-changed",
-      (_menu, open) => {
-        if (open) this._refreshUsage();
-      },
-    );
+    this._menuOpenStateId = (
+      this._menu as unknown as MenuWithOpenStateSignal
+    ).connect("open-state-changed", (_menu, open) => {
+      if (open) this._refreshUsage();
+    });
   }
 
   // Called by extension.js with the freshly-parsed state.json contents (or
@@ -222,8 +237,12 @@ export class ClaudeWatchIndicator {
     this._state = state;
     this._openInCodeItem.setSensitive(!!this._state.cwd);
     this._refreshUsage();
-    const action = resolveUiAction(
+    const status = deriveEffectiveStatus(
       this._state.status,
+      this._isSessionAlive(),
+    );
+    const action = resolveUiAction(
+      status,
       this._lastStatus,
       !this._initialRefreshDone,
     );
@@ -233,7 +252,7 @@ export class ClaudeWatchIndicator {
     else if (action === "complete") this._enterComplete();
     else if (action === "standby") this._enterStandby();
     const justCompleted = action === "complete";
-    this._lastStatus = this._state.status ?? null;
+    this._lastStatus = status ?? null;
     // Gated on the Auto-refresh toggle (default off) so a manual "Refresh
     // Usage" click is the only rate-limit request by default — see
     // docs/SECURITY.md "Opt-in network egress".
@@ -354,6 +373,16 @@ export class ClaudeWatchIndicator {
     }
   }
 
+  // A recorded pid means the hook that wrote it ran in exec form (no shell
+  // wrapper), so pid is the Claude Code CLI process itself — /proc/<pid>
+  // existing is a direct liveness check, not a heuristic. No pid (older
+  // state file, or none yet) means trust the status as before.
+  private _isSessionAlive(): boolean {
+    const pid = this._state.pid;
+    if (pid == null) return true;
+    return Gio.File.new_for_path(`/proc/${pid}`).query_exists(null);
+  }
+
   private _refreshUsage(): void {
     const transcriptPath = this._state.transcript_path;
     if (!transcriptPath) {
@@ -386,32 +415,39 @@ export class ClaudeWatchIndicator {
     this._refreshUsageItem.label.set_text("Checking…");
     this._rateLimit5hItem.visible = false;
     this._rateLimit7dItem.visible = false;
-    Gio.File.new_for_path(TOKEN_PATH).load_contents_async(null, (file, result) => {
-      let text: string;
-      try {
-        const [, contents] = file!.load_contents_finish(result);
-        text = new TextDecoder().decode(contents).trim();
-      } catch {
-        this._refreshUsageItem.label.set_text(`No token file at ${TOKEN_PATH}`);
-        return;
-      }
-      if (!text) {
-        this._refreshUsageItem.label.set_text("Token file is empty");
-        return;
-      }
-      const { token, error } = resolveToken(text);
-      if (error || !token) {
-        this._refreshUsageItem.label.set_text(error ?? "No token found");
-        return;
-      }
-      this._probeRateLimits(token);
-    });
+    Gio.File.new_for_path(TOKEN_PATH).load_contents_async(
+      null,
+      (file, result) => {
+        let text: string;
+        try {
+          const [, contents] = file!.load_contents_finish(result);
+          text = new TextDecoder().decode(contents).trim();
+        } catch {
+          this._refreshUsageItem.label.set_text(
+            `No token file at ${TOKEN_PATH}`,
+          );
+          return;
+        }
+        if (!text) {
+          this._refreshUsageItem.label.set_text("Token file is empty");
+          return;
+        }
+        const { token, error } = resolveToken(text);
+        if (error || !token) {
+          this._refreshUsageItem.label.set_text(error ?? "No token found");
+          return;
+        }
+        this._probeRateLimits(token);
+      },
+    );
   }
 
   private _probeRateLimits(token: string): void {
     const message = Soup.Message.new("GET", RATE_LIMIT_URL);
     if (!message) {
-      this._refreshUsageItem.label.set_text("Rate limit check failed — bad URL");
+      this._refreshUsageItem.label.set_text(
+        "Rate limit check failed — bad URL",
+      );
       return;
     }
     message.request_headers.append("authorization", `Bearer ${token}`);
@@ -450,11 +486,15 @@ export class ClaudeWatchIndicator {
         }
         if (statusCode < 200 || statusCode >= 300) {
           const detail = data?.error?.message ?? `HTTP ${statusCode}`;
-          this._refreshUsageItem.label.set_text(`Rate limit check failed — ${detail}`);
+          this._refreshUsageItem.label.set_text(
+            `Rate limit check failed — ${detail}`,
+          );
           return;
         }
         if (!data) {
-          this._refreshUsageItem.label.set_text("Rate limit check failed — bad response");
+          this._refreshUsageItem.label.set_text(
+            "Rate limit check failed — bad response",
+          );
           return;
         }
         this._refreshUsageItem.label.set_text("Refresh Usage");

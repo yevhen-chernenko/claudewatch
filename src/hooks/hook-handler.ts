@@ -41,6 +41,11 @@ if (status) {
       updated_at: new Date().toISOString(),
       cwd: input.cwd,
       transcript_path: input.transcript_path,
+      // Hooks run in exec form (command+args, no shell), so this is the
+      // Claude Code CLI process itself — lets the extension tell a
+      // genuinely running session apart from a stale "running" left behind
+      // by one that ended without ever firing Stop (killed terminal, crash).
+      pid: process.ppid,
     }),
   );
   fs.renameSync(tmpPath, statePath);

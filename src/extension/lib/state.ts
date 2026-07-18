@@ -16,9 +16,27 @@ export interface SessionState {
   updated_at?: string;
   cwd?: string;
   transcript_path?: string;
+  pid?: number;
 }
 
 export type UiAction = "running" | "waiting" | "complete" | "standby" | null;
+
+// A "running"/"waiting_approval" status only means something while the
+// session that wrote it is still alive — otherwise it's leftover from one
+// that ended without ever reaching "done" (killed terminal, crash, machine
+// sleep) and shouldn't be trusted. "done" doesn't need this: resolveUiAction
+// already treats any non-running/waiting status as standby on the initial
+// refresh. Takes the liveness check as a plain boolean (rather than doing
+// the /proc lookup itself) so this stays pure and testable like
+// resolveUiAction below.
+export function deriveEffectiveStatus(
+  status: string | undefined,
+  isSessionAlive: boolean,
+): string | undefined {
+  if (isSessionAlive) return status;
+  if (status === "running" || status === "waiting_approval") return undefined;
+  return status;
+}
 
 // Pure edge-detection: decides which _enter* transition (if any) a refresh
 // should perform, given the freshly-read status, the previously-seen status,
