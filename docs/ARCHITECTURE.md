@@ -1,11 +1,10 @@
 # Architecture
 
-Status: planning draft for the per-session design below — this describes
-where ClaudeWatch is headed, not what's shipped. The current interim
-implementation (single global `state.json` rather than per-session files,
-no GC, no install flow) is documented in [EXTENSION.md](EXTENSION.md); see
-[ROADMAP.md](ROADMAP.md) for which pieces of this document are and aren't
-built yet.
+Status: the per-session design below is implemented — one state file per
+Claude Code session, one panel label per live session, GC on retirement.
+No install flow yet (hooks are still added to `~/.claude/settings.json` by
+hand). See [EXTENSION.md](EXTENSION.md) for the as-built details and
+[ROADMAP.md](ROADMAP.md) for phase context.
 
 ## Components
 
@@ -57,18 +56,19 @@ at once). This sidesteps file-locking entirely for v1.
 
 Path: `${XDG_STATE_HOME:-~/.local/state}/claudewatch/sessions/<session_id>.json`
 
-Draft schema:
+As-built schema (`SessionState` in `src/extension/lib/state.ts`) — smaller
+than the original draft: no `counters`/`last_notification` object, since
+nothing in the extension consumes them yet and unused fields would just be
+dead weight the hook handler has to keep in sync:
 
 ```jsonc
 {
   "session_id": "abc123",
+  "status": "running | waiting_approval | done | compacting",
+  "updated_at": "2026-07-16T10:04:12Z",
   "cwd": "/home/user/project",
-  "status": "idle | running | waiting_approval | done",
-  "started_at": "2026-07-16T10:00:00Z",
-  "last_event_at": "2026-07-16T10:04:12Z",
-  "counters": { "tool_calls": 12, "files_edited": 3, "commands_run": 5 },
-  "last_notification": { "type": "permission_prompt", "at": "..." },
   "transcript_path": "/home/user/.claude/.../transcript.jsonl",
+  "pid": 12345,
 }
 ```
 
@@ -77,38 +77,46 @@ same filesystem) — never a partial-write read by the extension.
 
 ### Session lifecycle / state machine
 
-| Hook event                                                                                             | Transition                                                                        |
-| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
-| `SessionStart`                                                                                         | create file, `status: idle`                                                       |
-| `PreToolUse` / `PostToolUse`                                                                           | `status: running`, bump counters, refresh `last_event_at`                         |
-| `Notification` (`permission_prompt`)                                                                   | `status: waiting_approval`, fire desktop notification                             |
-| `Notification` (`idle_prompt`)                                                                         | `status: idle`                                                                    |
-| `Stop`                                                                                                 | `status: done`, fire desktop notification, keep file around briefly for the recap |
-| `SessionEnd` (if present at implementation time — confirm exact event name against current hooks docs) | delete the session file, or mark for GC                                           |
+| Hook event                                        | Transition                                                                                |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `UserPromptSubmit` / `PreToolUse` / `PostToolUse` | `status: running` (creates the file on first sight of a session)                          |
+| `Notification` / `PermissionRequest`              | `status: waiting_approval`, fire desktop notification (if the Notifications toggle is on) |
+| `PreCompact` (`trigger: "manual"`)                | `status: compacting`; `trigger: "auto"` is a no-op — not surfaced as its own state        |
+| `Stop`                                            | `status: done`; the panel flashes green for 5s then the session's label retires           |
+| `SessionEnd`                                      | delete the session's file immediately — the common-case cleanup path                      |
 
-Garbage collection: the extension, on a periodic `GLib.timeout_add_seconds`
-tick, removes session files whose `last_event_at` is older than a configurable
-threshold (default a few hours) and whose status is `done` or stale-`idle`.
-This also covers the case where a session's process was killed and never
-fired a terminal hook — files don't accumulate forever.
+Garbage collection: `SessionEnd` deleting the file is the common path. Two
+fallbacks cover what it can't: (1) whenever an `AgentLabel` retires for any
+reason (clean finish or a dead/crashed session), the extension deletes that
+session's file too, in case `SessionEnd` never fired; (2) a periodic
+`GLib.timeout_add_seconds` tick (`PERIODIC_REFRESH_SECONDS` in
+`extension.ts`) re-scans the sessions directory even when nothing has
+touched it, so a session whose process was killed mid-run (no `Stop`, no
+`SessionEnd`, so its file is never touched again) still gets its
+pid-liveness check re-evaluated and its label retired instead of sticking
+forever.
 
 ## Extension internals
 
 - `extension.js`: `Extension` subclass per the GNOME 45+ ESM API.
   `enable()` creates the `PanelMenu.Button`, starts the `Gio.FileMonitor` on
-  the sessions directory, starts the GC timeout. `disable()` tears down all
-  three, disconnects every signal, and clears any in-memory `Map` of session
-  state — full enable/disable symmetry (see [SECURITY.md](SECURITY.md)).
-- Panel indicator: icon/spinner reflecting the _aggregate_ state across all
-  live sessions, priority order `waiting_approval > running > done > idle`
-  (an approval request anywhere should never be hidden behind an "idle"
-  icon just because another session is quiet).
-- Popup menu: one row per active session (cwd, status, mechanical counters),
-  plus a rolling recap section.
+  the sessions directory, starts the periodic GC/re-scan timeout.
+  `disable()` tears down all three, disconnects every signal, and clears the
+  indicator's in-memory session maps — full enable/disable symmetry (see
+  [SECURITY.md](SECURITY.md)).
+- Panel indicator: not a single aggregate icon — one label per live session
+  (an `AgentLabel`, `lib/indicator.ts`), so a waiting session is never
+  hidden behind another session's running/idle state. Labels beyond a small
+  inline cap fold into a "+N more" chip; the "Agents are recovering ☕" label shows only
+  when zero sessions are live.
+- Popup menu: one row group per active session (cwd, status, local token
+  usage, "Open in VS Code" scoped to that session), plus the account-level
+  "Claude Usage" rate-limit section.
 - `prefs.js`: GNOME 45+ preferences window (libadwaita), separate process
-  from the shell — must not import `St`/`Clutter`/`Meta`/`Shell` here. Hosts
-  the notification toggles, GC threshold, and the hook install/uninstall
-  action.
+  from the shell — must not import `St`/`Clutter`/`Meta`/`Shell` here. Not
+  built yet — see [Install flow](#install-flow) below; the
+  Notifications/Auto-refresh toggles currently live in the popup menu
+  instead, in-memory only.
 
 All file reads off the FileMonitor callback are async (`Gio.File` async
 APIs), never sync I/O on the shell's main loop.
@@ -136,22 +144,28 @@ automatic:
 Track decisions here as they're made; move resolved ones into the relevant
 section above.
 
-- **Hook handler runtime**: plan is plain Node.js, zero npm dependencies,
-  single file — Claude Code already requires Node, so this adds no new
-  runtime dependency for the user. Confirm no case exists where Claude Code
-  is installed without a usable `node` on `PATH` before locking this in.
-- **File-per-event vs. daemon+socket**: start with the file-per-session
-  design above. Revisit only if the popup menu needs push-latency lower than
-  a `Gio.FileMonitor` tick can give, or if per-event disk I/O shows up as a
+- **Hook handler runtime** — resolved: plain Node.js, zero npm dependencies,
+  single file. Confirmed fine in practice — Claude Code already requires
+  Node on `PATH` to run at all.
+- **File-per-event vs. daemon+socket** — resolved: file-per-session, as
+  built. Revisit only if the panel needs push-latency lower than a
+  `Gio.FileMonitor` tick can give, or if per-event disk I/O shows up as a
   real cost.
-- **Exact hook event set for v1**: `SessionStart`, `PreToolUse`, `PostToolUse`,
-  `Notification`, `Stop` per the brief. Verify `SessionEnd` semantics and any
-  newer/renamed events against the live hooks reference
-  ([hooks reference](https://code.claude.com/docs/en/hooks)) at implementation time — the event
-  list has changed since this doc was written.
-- **Multi-session aggregate icon rules**: priority order proposed above;
-  needs a quick usability pass once the panel exists.
-- **GSettings schema ID**: must be namespaced under
+- **Exact hook event set** — resolved: `UserPromptSubmit`, `PreToolUse`,
+  `PostToolUse`, `PreCompact`, `PermissionRequest`, `Notification`, `Stop`,
+  `SessionEnd`. Confirmed against the live hooks reference
+  ([hooks reference](https://code.claude.com/docs/en/hooks)): `session_id`
+  is present on every hook's payload, and `SessionEnd` fires on session
+  termination with no decision control — a plain side-effect hook, which is
+  all the cleanup path needs. `SessionStart` isn't wired up: nothing in the
+  current state machine needs a session to exist before its first real
+  activity, so skipping it avoids one more hook entry to install.
+- **Multi-session panel UI** — resolved differently than the aggregate-icon
+  sketch above: one label per live session (capped, with overflow folding
+  into a chip) rather than a single icon reflecting a priority-ordered
+  aggregate. Chosen so a waiting session's request for input is always
+  visibly distinct, not collapsed into one shared color/text.
+- **GSettings schema ID**: still open — must be namespaced under
   `org.gnome.shell.extensions.<uuid>` per EGO rules — pin the extension UUID
   early since it's load-bearing for the schema path and can't change later
-  without breaking installs.
+  without breaking installs. Matters once `prefs.js` actually lands.

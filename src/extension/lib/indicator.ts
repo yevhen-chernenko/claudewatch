@@ -23,18 +23,20 @@ import {
   resolveToken,
 } from "./rateLimit.js";
 
-// The panel label's five states: idle ("standby", also where it lands 5s
-// after a task finishes; static dark background, no pulse), a task in
-// flight ("running", pulsing), the task paused on a permission prompt or
-// question ("waiting", static — no pulse), a manual /compact in progress
-// ("compacting", pulsing at the same rate as running), and the 5s flash
-// right after a task finishes ("complete", static).
-const STANDBY_TEXT = "All clear 👀";
+// Each live session gets its own label with the same four-state machine the
+// single-session version had, minus the shared "standby" state: idle
+// sessions don't get a label at all (see "Agents are recovering ☕" below), a task in
+// flight ("running", pulsing), paused on a permission prompt or question
+// ("waiting", static), a manual /compact in progress ("compacting", pulsing
+// at the same rate as running), and the 5s flash right after a task
+// finishes ("complete", static) before the label is removed for good.
+const STANDBY_TEXT = "Agents are recovering ☕";
 
-// Picked once per run (on the standby -> running transition) and reused for
-// every status text until the run falls back to standby, so "Agent Smith"
-// stays "Agent Smith" across running/waiting/complete instead of re-rolling
-// on every state-file update.
+// Picked once per session (when its label is first created) and reused for
+// every status text until the session retires, so "Agent Smith" stays
+// "Agent Smith" across running/waiting/complete instead of re-rolling on
+// every state-file update. Concurrent sessions avoid picking the same name
+// as each other where possible — see pickAgentName() below.
 const AGENT_NAMES = [
   "Smith",
   "Johnson",
@@ -65,16 +67,18 @@ const COMPLETE_STYLE =
   "padding: 0 6px; background-color: #1a7a43; border-radius: 4px; color: #ffffff;"; // 5.37:1
 const COMPACTING_STYLE =
   "padding: 0 6px; background-color: #7a3fa0; border-radius: 4px; color: #ffffff;"; // 6.89:1
+const OVERFLOW_STYLE =
+  "padding: 0 6px; background-color: #333a3d; border-radius: 4px; color: #ffffff;"; // 11.6:1
 const COMPLETE_FLASH_MS = 5000;
 // Full pulse cycle (dim -> bright -> dim) is 2x this, i.e. 2.6s; opacity
 // floor is 72% of 255.
 const PULSE_HALF_CYCLE_MS = 1300;
 const PULSE_DIM_OPACITY = Math.round(255 * 0.72);
-// Claude Code only writes a hook-triggered state.json update for a
+// Claude Code only writes a hook-triggered state-file update for a
 // *completed* compaction (PreCompact then, eventually, some later event once
 // the session resumes) — cancelling a manual /compact mid-flight fires no
-// hook at all, so the file monitor never wakes applyState() back up on its
-// own. _watchTranscriptForCompactOutcome() below tails the session
+// hook at all, so the directory monitor never wakes this label back up on
+// its own. _watchTranscriptForCompactOutcome() below tails the session
 // transcript directly for the two markers Claude Code actually writes
 // there — a `{"type":"system","subtype":"compact_boundary",...}` entry on a
 // real completion, or a local_command entry containing "AbortError:
@@ -82,13 +86,25 @@ const PULSE_DIM_OPACITY = Math.round(255 * 0.72);
 // either way, so this timeout is normally not what the user waits on. It's
 // the fallback behind that fast path: if transcript_path is missing or
 // those markers ever change shape, this still bounds "compacting" the same
-// way COMPLETE_FLASH_MS bounds "complete", so the panel can't get stuck
+// way COMPLETE_FLASH_MS bounds "complete", so a label can't get stuck
 // purple forever. Generous relative to how long even a large-transcript
 // compaction realistically takes, so it shouldn't cut a genuine one off
 // mid-flight.
 const COMPACTING_STALE_MS = 3 * 60 * 1000;
 
-type UiState = "standby" | "running" | "waiting" | "complete" | "compacting";
+// Labels beyond this count collapse into a single "+N more" chip so the
+// panel bar can't grow unbounded with many concurrent sessions — full
+// detail for every session is always in the popup menu.
+const MAX_INLINE_AGENTS = 3;
+
+type UiState = "running" | "waiting" | "complete" | "compacting";
+
+const UI_STATE_LABEL: Record<UiState, string> = {
+  running: "Running",
+  waiting: "Waiting for you",
+  compacting: "Compacting",
+  complete: "Done",
+};
 
 // Two real GNOME Shell APIs the community @girs types don't model: Actor's
 // `ease()` is JS-side sugar from environment.js (not GIR-introspected, so
@@ -113,28 +129,396 @@ type MenuWithOpenStateSignal = {
   ): number;
 };
 
+// A recorded pid means the hook that wrote it ran in exec form (no shell
+// wrapper), so pid is the Claude Code CLI process itself — /proc/<pid>
+// existing is a direct liveness check, not a heuristic. No pid (older state
+// file, or none yet) means trust the status as-is. Shared between the
+// pre-creation check in ClaudeWatchIndicator.applyStates() and each
+// AgentLabel's own per-refresh check, so both apply the exact same rule.
+function isSessionAlive(state: SessionState): boolean {
+  const pid = state.pid;
+  if (pid == null) return true;
+  return Gio.File.new_for_path(`/proc/${pid}`).query_exists(null);
+}
+
+// Picks a name for a newly-seen session, avoiding names already in use by
+// other concurrently-live sessions where possible. Falls back to a numbered
+// suffix on the fixed list's first name once every name is already taken
+// (an 11th+ concurrent session) rather than silently duplicating a name.
+function pickAgentName(namesInUse: ReadonlySet<string>): string {
+  const available = AGENT_NAMES.filter((name) => !namesInUse.has(name));
+  if (available.length > 0) {
+    return available[Math.floor(Math.random() * available.length)]; //NOSONAR - cosmetic name pick, not security-sensitive
+  }
+  let suffix = 2;
+  let candidate = `${AGENT_NAMES[0]} ${suffix}`;
+  while (namesInUse.has(candidate)) {
+    suffix += 1;
+    candidate = `${AGENT_NAMES[0]} ${suffix}`;
+  }
+  return candidate;
+}
+
+// One live Claude Code session's panel label and notification/pulse state
+// machine. Created when a session first reports a
+// running/waiting_approval/compacting status, destroyed when it retires
+// (task done and the post-completion flash has elapsed, or the session goes
+// away/dies without ever finishing cleanly). Owns exactly the per-session
+// slice of what the single-session ClaudeWatchIndicator used to own itself.
+class AgentLabel {
+  readonly sessionId: string;
+  readonly actor: InstanceType<typeof St.Label>;
+  readonly agentName: string;
+
+  private readonly _notify: (text: string, soundName: string) => void;
+  private readonly _onRetired: () => void;
+
+  private _uiState: UiState = "running";
+  private _lastStatus: string | null = null;
+  private _state: SessionState = {};
+  private _pulseDim = false;
+  private _flashTimeoutId: number | null = null;
+  private _compactingTimeoutId: number | null = null;
+  private _transcriptMonitor: InstanceType<typeof Gio.FileMonitor> | null =
+    null;
+  private _transcriptMonitorId: number | null = null;
+  private _transcriptWatchFile: InstanceType<typeof Gio.File> | null = null;
+  private _transcriptWatchStartLength = 0;
+
+  constructor(
+    sessionId: string,
+    agentName: string,
+    notify: (text: string, soundName: string) => void,
+    onRetired: () => void,
+  ) {
+    this.sessionId = sessionId;
+    this.agentName = agentName;
+    this._notify = notify;
+    this._onRetired = onRetired;
+    // Placeholder only — applyState() runs synchronously right after
+    // construction (see ClaudeWatchIndicator._createAgent()) and always
+    // overwrites this before it's ever painted.
+    this.actor = new St.Label({
+      y_align: Clutter.ActorAlign.CENTER,
+      style: RUNNING_STYLE,
+      text: "",
+    });
+  }
+
+  get state(): SessionState {
+    return this._state;
+  }
+
+  get uiState(): UiState {
+    return this._uiState;
+  }
+
+  // Called with this session's freshly-parsed state-file contents every
+  // time the sessions directory changes. Edge-triggered on status
+  // transitions via resolveUiAction(), same rules as the single-session
+  // version — see its comment in lib/state.ts.
+  applyState(state: SessionState, isInitial: boolean): void {
+    this._state = state;
+    const status = deriveEffectiveStatus(state.status, isSessionAlive(state));
+    const action = resolveUiAction(status, this._lastStatus, isInitial);
+    this._lastStatus = status ?? null;
+    if (action === "running") this._enterRunning();
+    else if (action === "waiting") this._enterWaiting();
+    else if (action === "compacting") this._enterCompacting();
+    else if (action === "complete") this._enterComplete();
+    else if (action === "standby") {
+      // Not a fresh "done" — the session went away without a clean finish
+      // (process killed, crashed). No green flash for that, straight to
+      // retirement, same as the single-session version snapping to standby.
+      this._retire();
+      return;
+    }
+    if (status === "compacting") {
+      this._armCompactingTimeout();
+      this._watchTranscriptForCompactOutcome();
+    } else {
+      this._clearCompactingTimeout();
+      this._stopWatchingTranscript();
+    }
+  }
+
+  // The session's file disappeared from the directory entirely (SessionEnd
+  // cleanup, or a manual/external delete) rather than reporting a new
+  // status. A no-op while already mid-complete-flash — that timer already
+  // owns retirement, and a vanished file doesn't need to race it.
+  handleMissing(): void {
+    if (this._uiState === "complete") return;
+    this._retire();
+  }
+
+  private _enterRunning(): void {
+    this._uiState = "running";
+    this._clearFlashTimeout();
+    this.actor.style = RUNNING_STYLE;
+    this.actor.set_text(runningText(this.agentName));
+    this.actor.opacity = 255;
+    this._pulseDim = false;
+    this._pulseLoop();
+  }
+
+  private _enterWaiting(): void {
+    this._uiState = "waiting";
+    this._clearFlashTimeout();
+    this.actor.remove_all_transitions();
+    this.actor.style = WAITING_STYLE;
+    const text = waitingText(this.agentName);
+    this.actor.set_text(text);
+    this.actor.opacity = 255;
+    this._notify(text, "dialog-question");
+  }
+
+  private _enterCompacting(): void {
+    this._uiState = "compacting";
+    this._clearFlashTimeout();
+    this.actor.style = COMPACTING_STYLE;
+    this.actor.set_text(COMPACTING_TEXT);
+    this.actor.opacity = 255;
+    this._pulseDim = false;
+    this._pulseLoop();
+  }
+
+  // Just-finished state: flashes the label green for COMPLETE_FLASH_MS,
+  // then retires (removes) the label entirely — unlike the single-session
+  // version there's no shared standby state to fall back to; "Agents are recovering ☕"
+  // only appears once every session has retired.
+  private _enterComplete(): void {
+    this._uiState = "complete";
+    this.actor.remove_all_transitions();
+    this._clearFlashTimeout();
+    this.actor.opacity = 255;
+    this.actor.style = COMPLETE_STYLE;
+    const text = completeText(this.agentName);
+    this.actor.set_text(text);
+    this._notify(text, "complete");
+    this._flashTimeoutId = GLib.timeout_add(
+      GLib.PRIORITY_DEFAULT,
+      COMPLETE_FLASH_MS,
+      () => {
+        this._flashTimeoutId = null;
+        this._retire();
+        return GLib.SOURCE_REMOVE;
+      },
+    );
+  }
+
+  private _retire(): void {
+    this._onRetired();
+  }
+
+  private _clearFlashTimeout(): void {
+    if (this._flashTimeoutId) {
+      GLib.source_remove(this._flashTimeoutId);
+      this._flashTimeoutId = null;
+    }
+  }
+
+  private _armCompactingTimeout(): void {
+    this._clearCompactingTimeout();
+    this._compactingTimeoutId = GLib.timeout_add(
+      GLib.PRIORITY_DEFAULT,
+      COMPACTING_STALE_MS,
+      () => {
+        this._compactingTimeoutId = null;
+        if (this._uiState === "compacting") this._retire();
+        return GLib.SOURCE_REMOVE;
+      },
+    );
+  }
+
+  private _clearCompactingTimeout(): void {
+    if (this._compactingTimeoutId) {
+      GLib.source_remove(this._compactingTimeoutId);
+      this._compactingTimeoutId = null;
+    }
+  }
+
+  private _watchTranscriptForCompactOutcome(): void {
+    const transcriptPath = this._state.transcript_path;
+    if (!transcriptPath) {
+      this._stopWatchingTranscript();
+      return;
+    }
+    const file = Gio.File.new_for_path(transcriptPath);
+    file.load_contents_async(null, (_file, result) => {
+      let startLength = 0;
+      try {
+        const [, contents] = file.load_contents_finish(result);
+        startLength = new TextDecoder().decode(contents).length;
+      } catch {
+        // Transcript not there yet — watch from the start so nothing
+        // already-written can hide a fresh marker.
+      }
+      if (this._uiState !== "compacting") return;
+      this._stopWatchingTranscript();
+      this._transcriptWatchStartLength = startLength;
+      this._transcriptWatchFile = file;
+      this._transcriptMonitor = file.monitor_file(
+        Gio.FileMonitorFlags.NONE,
+        null,
+      );
+      this._transcriptMonitorId = this._transcriptMonitor.connect(
+        "changed",
+        () => this._checkTranscriptForCompactOutcome(),
+      );
+    });
+  }
+
+  private _checkTranscriptForCompactOutcome(): void {
+    const file = this._transcriptWatchFile;
+    if (!file || this._uiState !== "compacting") return;
+    file.load_contents_async(null, (_file, result) => {
+      if (this._uiState !== "compacting" || this._transcriptWatchFile !== file)
+        return;
+      let contents: string;
+      try {
+        const [, bytes] = file.load_contents_finish(result);
+        contents = new TextDecoder().decode(bytes);
+      } catch {
+        return; // Mid-write; the next "changed" event retries.
+      }
+      if (contents.length <= this._transcriptWatchStartLength) return;
+      const appended = contents.slice(this._transcriptWatchStartLength);
+      for (const line of appended.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let entry: { type?: string; subtype?: string; content?: unknown };
+        try {
+          entry = JSON.parse(trimmed);
+        } catch {
+          continue; // Partial line mid-write; keep waiting.
+        }
+        if (entry.type !== "system") continue;
+        const isAbort =
+          entry.subtype === "local_command" &&
+          typeof entry.content === "string" &&
+          entry.content.includes("AbortError: Compaction canceled.");
+        if (entry.subtype === "compact_boundary" || isAbort) {
+          this._retire();
+          return;
+        }
+      }
+    });
+  }
+
+  private _stopWatchingTranscript(): void {
+    if (this._transcriptMonitor && this._transcriptMonitorId) {
+      this._transcriptMonitor.disconnect(this._transcriptMonitorId);
+    }
+    this._transcriptMonitor = null;
+    this._transcriptMonitorId = null;
+    this._transcriptWatchFile = null;
+  }
+
+  // Only "running" and "compacting" pulse — "waiting" reads clearly enough
+  // from its color/text alone and stays static, same as "complete".
+  private _pulseLoop(): void {
+    if (this._uiState !== "running" && this._uiState !== "compacting") return;
+    this._pulseDim = !this._pulseDim;
+    (this.actor as unknown as Easeable).ease({
+      opacity: this._pulseDim ? PULSE_DIM_OPACITY : 255,
+      duration: PULSE_HALF_CYCLE_MS,
+      mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
+      onComplete: () => this._pulseLoop(),
+    });
+  }
+
+  destroy(): void {
+    this._clearFlashTimeout();
+    this._clearCompactingTimeout();
+    this._stopWatchingTranscript();
+    this.actor.remove_all_transitions();
+    this.actor.destroy();
+  }
+}
+
+// One row group in the popup menu's "Sessions" section for a single live
+// session: a clickable header ("Open <name> in VS Code", sensitive only
+// once cwd is known), a non-reactive status/location line, and a
+// non-reactive local token-usage line (refreshed separately — see
+// ClaudeWatchIndicator._refreshSessionUsage()). Kept separate from
+// AgentLabel since the panel label and the menu rows have independent
+// GNOME Shell widget lifetimes, even though they always retire together.
+class SessionMenuRow {
+  private readonly _header: InstanceType<typeof PopupMenu.PopupMenuItem>;
+  private readonly _detail: InstanceType<typeof PopupMenu.PopupMenuItem>;
+  private readonly _usage: InstanceType<typeof PopupMenu.PopupMenuItem>;
+
+  constructor(section: InstanceType<typeof PopupMenu.PopupMenuSection>) {
+    this._header = new PopupMenu.PopupMenuItem("");
+    this._detail = new PopupMenu.PopupMenuItem("", {
+      reactive: false,
+      can_focus: false,
+    });
+    this._usage = new PopupMenu.PopupMenuItem("", {
+      reactive: false,
+      can_focus: false,
+    });
+    section.addMenuItem(this._header);
+    section.addMenuItem(this._detail);
+    section.addMenuItem(this._usage);
+  }
+
+  update(agentName: string, uiState: UiState, state: SessionState): void {
+    const cwd = state.cwd;
+    this._header.label.set_text(
+      cwd ? `Open ${agentName} in VS Code` : `${agentName} — waiting for cwd`,
+    );
+    this._header.setSensitive(!!cwd);
+    this._header.activate = () => {
+      if (!cwd) return;
+      try {
+        Gio.Subprocess.new(["code", cwd], Gio.SubprocessFlags.NONE);
+      } catch {
+        Main.notify(
+          "ClaudeWatch",
+          "Couldn't launch VS Code — is `code` on your PATH?",
+        );
+      }
+    };
+    const location = cwd ?? "unknown directory";
+    this._detail.label.set_text(`${UI_STATE_LABEL[uiState]} · ${location}`);
+  }
+
+  updateUsage(text: string): void {
+    this._usage.label.set_text(text);
+  }
+
+  destroy(): void {
+    this._header.destroy();
+    this._detail.destroy();
+    this._usage.destroy();
+  }
+}
+
 // Owns the panel indicator (`this.button`, a plain `PanelMenu.Button` — not
 // subclassed, since GJS's GObject-subclassing ceremony buys nothing here
-// over composition) and its popup menu: the visible state machine (label
-// text/style/pulse, desktop notifications) and the "Claude Usage" section
-// (local session totals plus the opt-in rate-limit check). extension.js
-// only owns file-watching wiring and hands this class parsed state via
-// applyState().
+// over composition), the row of per-session AgentLabels inside it, and the
+// popup menu: per-session rows plus the "Claude Usage" section (the opt-in
+// account-level rate-limit check). extension.js only owns directory-
+// watching wiring and hands this class parsed per-session state via
+// applyStates().
 export class ClaudeWatchIndicator {
   button: InstanceType<typeof PanelMenu.Button>;
 
   private readonly _uuid: string;
-  private readonly _label: InstanceType<typeof St.Label>;
+  private readonly _box: InstanceType<typeof St.BoxLayout>;
+  private readonly _standbyLabel: InstanceType<typeof St.Label>;
+  private readonly _overflowLabel: InstanceType<typeof St.Label>;
   // `PanelMenu.Button.menu` is typed as `PopupMenu | PopupDummyMenu` since
   // the ambient types don't narrow on the dontCreateMenu constructor arg;
   // it's always a real PopupMenu here since we pass `false` below.
   private readonly _menu: PopupMenu.PopupMenu;
 
-  private readonly _openInCodeItem: InstanceType<
-    typeof PopupMenu.PopupMenuItem
+  private readonly _sessionsHeading: InstanceType<
+    typeof PopupMenu.PopupSeparatorMenuItem
   >;
-  private readonly _usageLabelItem: InstanceType<
-    typeof PopupMenu.PopupMenuItem
+  private readonly _sessionsSection: InstanceType<
+    typeof PopupMenu.PopupMenuSection
   >;
   private readonly _rateLimit5hItem: InstanceType<
     typeof PopupMenu.PopupMenuItem
@@ -155,55 +539,58 @@ export class ClaudeWatchIndicator {
   private readonly _menuOpenStateId: number;
 
   private readonly _httpSession: InstanceType<typeof Soup.Session>;
-  private _lastStatus: string | null = null;
-  private _initialRefreshDone = false;
+  private readonly _onSessionRetired: (sessionId: string) => void;
   private _autoRefreshOnDone = false;
   private _notificationsEnabled = false;
-  private _flashTimeoutId: number | null = null;
-  private _compactingTimeoutId: number | null = null;
-  private _transcriptMonitor: InstanceType<typeof Gio.FileMonitor> | null =
-    null;
-  private _transcriptMonitorId: number | null = null;
-  private _transcriptWatchFile: InstanceType<typeof Gio.File> | null = null;
-  private _transcriptWatchStartLength = 0;
-  private _pulseDim = false;
-  private _uiState: UiState = "standby";
-  private _state: SessionState = {};
-  // Set on the standby -> running transition, cleared back to null on the
-  // return to standby; see AGENT_NAMES above.
-  private _agentName: string | null = null;
+  private readonly _agents = new Map<string, AgentLabel>();
+  private readonly _menuRows = new Map<string, SessionMenuRow>();
+  // Insertion order, oldest first — determines which sessions show inline
+  // vs. fold into the overflow chip once there are more than
+  // MAX_INLINE_AGENTS live at once.
+  private readonly _order: string[] = [];
 
-  constructor(uuid: string, name: string) {
+  constructor(
+    uuid: string,
+    name: string,
+    onSessionRetired: (sessionId: string) => void,
+  ) {
     this._uuid = uuid;
+    this._onSessionRetired = onSessionRetired;
 
     this.button = new PanelMenu.Button(0.0, name, false);
     this._menu = this.button.menu as PopupMenu.PopupMenu;
 
-    this._label = new St.Label({
+    this._box = new St.BoxLayout({ style: "spacing: 4px;" });
+    this.button.add_child(this._box);
+
+    this._standbyLabel = new St.Label({
       text: STANDBY_TEXT,
       y_align: Clutter.ActorAlign.CENTER,
       style: STANDBY_STYLE,
     });
-    this.button.add_child(this._label);
+    this._box.add_child(this._standbyLabel);
+
+    this._overflowLabel = new St.Label({
+      y_align: Clutter.ActorAlign.CENTER,
+      style: OVERFLOW_STYLE,
+      visible: false,
+    });
+    this._box.add_child(this._overflowLabel);
 
     // Fixed width so the menu doesn't reflow as row text changes length
     // (e.g. "Checking…" vs. a long rate-limit error string).
     this._menu.box.style = "width: 300px; min-width: 300px; max-width: 300px;";
 
-    this._openInCodeItem = new PopupMenu.PopupMenuItem("Open in VS Code");
-    this._openInCodeItem.setSensitive(false);
-    this._openInCodeItem.connect("activate", () => this._openInVsCode());
-    this._menu.addMenuItem(this._openInCodeItem);
+    this._sessionsHeading = new PopupMenu.PopupSeparatorMenuItem("Sessions");
+    this._sessionsHeading.visible = false;
+    this._menu.addMenuItem(this._sessionsHeading);
+
+    this._sessionsSection = new PopupMenu.PopupMenuSection();
+    this._menu.addMenuItem(this._sessionsSection);
 
     this._menu.addMenuItem(
       new PopupMenu.PopupSeparatorMenuItem("Claude Usage"),
     );
-
-    this._usageLabelItem = new PopupMenu.PopupMenuItem("", {
-      reactive: false,
-      can_focus: false,
-    });
-    this._menu.addMenuItem(this._usageLabelItem);
 
     this._httpSession = new Soup.Session();
 
@@ -269,258 +656,110 @@ export class ClaudeWatchIndicator {
     this._menuOpenStateId = (
       this._menu as unknown as MenuWithOpenStateSignal
     ).connect("open-state-changed", (_menu, open) => {
-      if (open) this._refreshUsage();
+      if (open) this._refreshAllSessionUsage();
     });
   }
 
-  // Called by extension.js with the freshly-parsed state.json contents (or
-  // {} if the file is missing/mid-write) every time the file monitor fires.
-  // Edge-triggered on status transitions, not on every file-monitor event
-  // while status stays the same. Text and style are both driven from
-  // this._uiState (set by the _enter* methods below), not directly from the
-  // raw hook status — that's what lets the 5s post-completion timer fall
-  // back to standby on its own even though the state file still says
-  // status: "done". See resolveUiAction() for the transition rules
-  // themselves.
-  applyState(state: SessionState): void {
-    this._state = state;
-    this._openInCodeItem.setSensitive(!!this._state.cwd);
-    this._refreshUsage();
-    const status = deriveEffectiveStatus(
-      this._state.status,
-      this._isSessionAlive(),
-    );
-    const action = resolveUiAction(
-      status,
-      this._lastStatus,
-      !this._initialRefreshDone,
-    );
-    this._initialRefreshDone = true;
-    if (action === "running") this._enterRunning();
-    else if (action === "waiting") this._enterWaiting();
-    else if (action === "compacting") this._enterCompacting();
-    else if (action === "complete") this._enterComplete();
-    else if (action === "standby") this._enterStandby();
-    // Re-armed on every refresh that still reports "compacting" — not just
-    // the initial transition into it — so a /compact retried after a
-    // cancelled one (same status both times, so `action` above is null and
-    // _enterCompacting() doesn't re-fire) still gets both self-heal paths
-    // reset instead of being timed/watched from the first, aborted attempt.
-    if (status === "compacting") {
-      this._armCompactingTimeout();
-      this._watchTranscriptForCompactOutcome();
-    } else {
-      this._clearCompactingTimeout();
-      this._stopWatchingTranscript();
+  // Called by extension.js with every session's freshly-parsed state-file
+  // contents every time the sessions directory changes — one entry per
+  // sessions/<session_id>.json file currently on disk, keyed by session id.
+  applyStates(states: ReadonlyMap<string, SessionState>): void {
+    let justCompleted = false;
+
+    for (const [sessionId, label] of this._agents) {
+      if (!states.has(sessionId)) label.handleMissing();
     }
-    const justCompleted = action === "complete";
-    this._lastStatus = status ?? null;
-    // Gated on the Auto-refresh toggle (default off) so a manual "Refresh
-    // Usage" click is the only rate-limit request by default — see
-    // docs/SECURITY.md "Opt-in network egress".
+
+    for (const [sessionId, state] of states) {
+      const existing = this._agents.get(sessionId);
+      if (existing) {
+        const wasDone = existing.uiState === "complete";
+        existing.applyState(state, false);
+        const isDoneNow: UiState = existing.uiState;
+        if (!wasDone && isDoneNow === "complete") justCompleted = true;
+        this._menuRows
+          .get(sessionId)
+          ?.update(existing.agentName, existing.uiState, existing.state);
+        continue;
+      }
+      const status = deriveEffectiveStatus(state.status, isSessionAlive(state));
+      if (
+        status !== "running" &&
+        status !== "waiting_approval" &&
+        status !== "compacting"
+      ) {
+        continue; // Not a session worth showing a fresh label for.
+      }
+      this._createAgent(sessionId, state);
+    }
+
+    this._syncBox();
     if (this._autoRefreshOnDone && justCompleted) {
       this._refreshRateLimits();
     }
   }
 
-  // Idle state: no pulse, no flash, plain padded label. Also where the
-  // 5s post-completion flash lands once it times out.
-  private _enterStandby(): void {
-    this._uiState = "standby";
-    this._label.remove_all_transitions();
-    if (this._flashTimeoutId) {
-      GLib.source_remove(this._flashTimeoutId);
-      this._flashTimeoutId = null;
-    }
-    // Whichever compacting self-heal path (timeout or transcript marker)
-    // got us here, the other one is now stale — always tear down both so
-    // entering standby is a clean terminal action regardless of trigger.
-    this._clearCompactingTimeout();
-    this._stopWatchingTranscript();
-    // Both self-heal paths call this directly, outside applyState(), so
-    // _lastStatus never sees the drop out of "compacting" — without this,
-    // a retried /compact writes the same "compacting" status again,
-    // resolveUiAction() sees no edge, and the panel never re-enters
-    // compacting. applyState()'s own standby transition harmlessly
-    // overwrites this again right after with the real current status.
-    this._lastStatus = null;
-    this._label.opacity = 255;
-    this._label.style = STANDBY_STYLE;
-    this._label.set_text(STANDBY_TEXT);
-    this._agentName = null;
-  }
-
-  // Picks the run's agent name on first use after standby; subsequent calls
-  // within the same run return the same name.
-  private _ensureAgentName(): string {
-    if (!this._agentName) {
-      this._agentName =
-        AGENT_NAMES[Math.floor(Math.random() * AGENT_NAMES.length)]; //NOSONAR - cosmetic name pick, not security-sensitive
-    }
-    return this._agentName;
-  }
-
-  // Task-in-flight state: slowly pulses the label orange by easing its
-  // opacity back and forth (the background color itself stays fixed).
-  private _enterRunning(): void {
-    this._uiState = "running";
-    if (this._flashTimeoutId) {
-      GLib.source_remove(this._flashTimeoutId);
-      this._flashTimeoutId = null;
-    }
-    this._label.style = RUNNING_STYLE;
-    this._label.set_text(runningText(this._ensureAgentName()));
-    this._label.opacity = 255;
-    this._pulseDim = false;
-    this._pulseLoop();
-  }
-
-  // Paused-on-prompt state: Claude stopped to ask for a permission or a
-  // question and is waiting on the user. Static (no pulse) — the color and
-  // text alone are enough to flag it. Also fires a desktop notification
-  // since the panel alone is easy to miss while Claude is genuinely blocked
-  // on the user.
-  private _enterWaiting(): void {
-    this._uiState = "waiting";
-    if (this._flashTimeoutId) {
-      GLib.source_remove(this._flashTimeoutId);
-      this._flashTimeoutId = null;
-    }
-    this._label.remove_all_transitions();
-    this._label.style = WAITING_STYLE;
-    const text = waitingText(this._ensureAgentName());
-    this._label.set_text(text);
-    this._label.opacity = 255;
-    this._notify(text, "dialog-question");
-  }
-
-  // Manual /compact in progress: Claude paused to summarize its own
-  // transcript, not to ask the user anything, so this doesn't fire a
-  // notification the way _enterWaiting() does — same pulse cadence as
-  // _enterRunning(), just purple, since it's progress rather than a block.
-  private _enterCompacting(): void {
-    this._uiState = "compacting";
-    if (this._flashTimeoutId) {
-      GLib.source_remove(this._flashTimeoutId);
-      this._flashTimeoutId = null;
-    }
-    this._label.style = COMPACTING_STYLE;
-    this._label.set_text(COMPACTING_TEXT);
-    this._label.opacity = 255;
-    this._pulseDim = false;
-    this._pulseLoop();
-  }
-
-  // See COMPACTING_STALE_MS above: the self-heal for a cancelled /compact,
-  // since Claude Code fires no hook at all when one is aborted mid-flight.
-  private _armCompactingTimeout(): void {
-    this._clearCompactingTimeout();
-    this._compactingTimeoutId = GLib.timeout_add(
-      GLib.PRIORITY_DEFAULT,
-      COMPACTING_STALE_MS,
-      () => {
-        this._compactingTimeoutId = null;
-        if (this._uiState === "compacting") this._enterStandby();
-        return GLib.SOURCE_REMOVE;
-      },
+  private _createAgent(sessionId: string, state: SessionState): void {
+    const namesInUse = new Set(
+      Array.from(this._agents.values(), (agent) => agent.agentName),
     );
+    const agentName = pickAgentName(namesInUse);
+    const label = new AgentLabel(
+      sessionId,
+      agentName,
+      (text, sound) => this._notify(text, sound),
+      () => this._retireAgent(sessionId),
+    );
+    this._agents.set(sessionId, label);
+    this._order.push(sessionId);
+    // Parent the actor into the box before running applyState() below —
+    // easing an actor's opacity before it's on stage completes instantly
+    // and synchronously in Clutter, so onComplete's recursive _pulseLoop()
+    // call would recurse with zero delay and blow the stack ("too much
+    // recursion") instead of animating over time.
+    this._syncBox();
+    label.applyState(state, true);
+
+    const row = new SessionMenuRow(this._sessionsSection);
+    row.update(label.agentName, label.uiState, label.state);
+    this._menuRows.set(sessionId, row);
+    this._sessionsHeading.visible = true;
   }
 
-  private _clearCompactingTimeout(): void {
-    if (this._compactingTimeoutId) {
-      GLib.source_remove(this._compactingTimeoutId);
-      this._compactingTimeoutId = null;
-    }
+  private _retireAgent(sessionId: string): void {
+    const label = this._agents.get(sessionId);
+    if (!label) return;
+    label.destroy();
+    this._agents.delete(sessionId);
+    const orderIndex = this._order.indexOf(sessionId);
+    if (orderIndex !== -1) this._order.splice(orderIndex, 1);
+    this._menuRows.get(sessionId)?.destroy();
+    this._menuRows.delete(sessionId);
+    this._sessionsHeading.visible = this._agents.size > 0;
+    this._syncBox();
+    this._onSessionRetired(sessionId);
   }
 
-  // Fast path for the same problem COMPACTING_STALE_MS guards against:
-  // tails the session transcript from its current length (so a leftover
-  // marker from an earlier /compact attempt earlier in the same file can't
-  // false-trigger this one) for either outcome marker Claude Code actually
-  // writes — a compact_boundary system entry on success, or a local_command
-  // entry containing "AbortError: Compaction canceled." on a cancel — and
-  // reacts immediately instead of waiting for the fallback timeout.
-  // Best-effort: if transcript_path is missing, or the markers never show
-  // up, COMPACTING_STALE_MS still catches it.
-  private _watchTranscriptForCompactOutcome(): void {
-    const transcriptPath = this._state.transcript_path;
-    if (!transcriptPath) {
-      this._stopWatchingTranscript();
-      return;
-    }
-    const file = Gio.File.new_for_path(transcriptPath);
-    file.load_contents_async(null, (_file, result) => {
-      let startLength = 0;
-      try {
-        const [, contents] = file.load_contents_finish(result);
-        startLength = new TextDecoder().decode(contents).length;
-      } catch {
-        // Transcript not there yet — watch from the start so nothing
-        // already-written can hide a fresh marker.
+  // Shows every live session's label up to MAX_INLINE_AGENTS, folding the
+  // rest into a single "+N more" chip, or the standby "Agents are recovering ☕" label
+  // when nothing is live.
+  private _syncBox(): void {
+    const count = this._order.length;
+    this._standbyLabel.visible = count === 0;
+    for (const [index, sessionId] of this._order.entries()) {
+      const label = this._agents.get(sessionId);
+      if (!label) continue;
+      if (!label.actor.get_parent()) {
+        this._box.add_child(label.actor);
+        this._box.set_child_below_sibling(label.actor, this._overflowLabel);
       }
-      // The UI may have already moved on (timeout fired first, or a fresh
-      // status update landed) while this async read was in flight.
-      if (this._uiState !== "compacting") return;
-      this._stopWatchingTranscript();
-      this._transcriptWatchStartLength = startLength;
-      this._transcriptWatchFile = file;
-      this._transcriptMonitor = file.monitor_file(
-        Gio.FileMonitorFlags.NONE,
-        null,
-      );
-      this._transcriptMonitorId = this._transcriptMonitor.connect(
-        "changed",
-        () => this._checkTranscriptForCompactOutcome(),
-      );
-    });
-  }
-
-  private _checkTranscriptForCompactOutcome(): void {
-    const file = this._transcriptWatchFile;
-    if (!file || this._uiState !== "compacting") return;
-    file.load_contents_async(null, (_file, result) => {
-      // A newer watch may have started (different file/offset) while this
-      // read was in flight — don't act on data that no longer applies.
-      if (this._uiState !== "compacting" || this._transcriptWatchFile !== file)
-        return;
-      let contents: string;
-      try {
-        const [, bytes] = file.load_contents_finish(result);
-        contents = new TextDecoder().decode(bytes);
-      } catch {
-        return; // Mid-write; the next "changed" event retries.
-      }
-      if (contents.length <= this._transcriptWatchStartLength) return;
-      const appended = contents.slice(this._transcriptWatchStartLength);
-      for (const line of appended.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        let entry: { type?: string; subtype?: string; content?: unknown };
-        try {
-          entry = JSON.parse(trimmed);
-        } catch {
-          continue; // Partial line mid-write; keep waiting.
-        }
-        if (entry.type !== "system") continue;
-        const isAbort =
-          entry.subtype === "local_command" &&
-          typeof entry.content === "string" &&
-          entry.content.includes("AbortError: Compaction canceled.");
-        if (entry.subtype === "compact_boundary" || isAbort) {
-          this._enterStandby();
-          return;
-        }
-      }
-    });
-  }
-
-  private _stopWatchingTranscript(): void {
-    if (this._transcriptMonitor && this._transcriptMonitorId) {
-      this._transcriptMonitor.disconnect(this._transcriptMonitorId);
+      label.actor.visible = index < MAX_INLINE_AGENTS;
     }
-    this._transcriptMonitor = null;
-    this._transcriptMonitorId = null;
-    this._transcriptWatchFile = null;
+    const overflowCount = count - MAX_INLINE_AGENTS;
+    this._overflowLabel.visible = overflowCount > 0;
+    if (overflowCount > 0) {
+      this._overflowLabel.set_text(`+${overflowCount} more`);
+    }
   }
 
   // Desktop notification paired with a themed system sound — every waiting/
@@ -535,93 +774,42 @@ export class ClaudeWatchIndicator {
     global.display.get_sound_player().play_from_theme(soundName, text, null);
   }
 
-  // Only "running" and "compacting" pulse — "waiting" reads clearly enough
-  // from its color/text alone and stays static, same as standby/complete.
-  private _pulseLoop(): void {
-    if (this._uiState !== "running" && this._uiState !== "compacting") return;
-    this._pulseDim = !this._pulseDim;
-    (this._label as unknown as Easeable).ease({
-      opacity: this._pulseDim ? PULSE_DIM_OPACITY : 255,
-      duration: PULSE_HALF_CYCLE_MS,
-      mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
-      onComplete: () => this._pulseLoop(),
-    });
-  }
-
-  // Just-finished state: flashes the label green for COMPLETE_FLASH_MS,
-  // then falls back to standby on its own. Also fires a desktop notification
-  // for the same reason as _enterWaiting() — easy to miss the panel alone.
-  private _enterComplete(): void {
-    this._uiState = "complete";
-    this._label.remove_all_transitions();
-    if (this._flashTimeoutId) {
-      GLib.source_remove(this._flashTimeoutId);
-      this._flashTimeoutId = null;
-    }
-    this._label.opacity = 255;
-    this._label.style = COMPLETE_STYLE;
-    const text = completeText(this._ensureAgentName());
-    this._label.set_text(text);
-    this._notify(text, "complete");
-    this._flashTimeoutId = GLib.timeout_add(
-      GLib.PRIORITY_DEFAULT,
-      COMPLETE_FLASH_MS,
-      () => {
-        this._flashTimeoutId = null;
-        this._enterStandby();
-        return GLib.SOURCE_REMOVE;
-      },
-    );
-  }
-
-  private _openInVsCode(): void {
-    const cwd = this._state.cwd;
-    if (!cwd) return;
-    try {
-      Gio.Subprocess.new(["code", cwd], Gio.SubprocessFlags.NONE);
-    } catch {
-      Main.notify(
-        "ClaudeWatch",
-        "Couldn't launch VS Code — is `code` on your PATH?",
-      );
+  private _refreshAllSessionUsage(): void {
+    for (const [sessionId, label] of this._agents) {
+      this._refreshSessionUsage(sessionId, label.state.transcript_path);
     }
   }
 
-  // A recorded pid means the hook that wrote it ran in exec form (no shell
-  // wrapper), so pid is the Claude Code CLI process itself — /proc/<pid>
-  // existing is a direct liveness check, not a heuristic. No pid (older
-  // state file, or none yet) means trust the status as before.
-  private _isSessionAlive(): boolean {
-    const pid = this._state.pid;
-    if (pid == null) return true;
-    return Gio.File.new_for_path(`/proc/${pid}`).query_exists(null);
-  }
-
-  private _refreshUsage(): void {
-    const transcriptPath = this._state.transcript_path;
+  private _refreshSessionUsage(
+    sessionId: string,
+    transcriptPath: string | undefined,
+  ): void {
+    const row = this._menuRows.get(sessionId);
+    if (!row) return;
     if (!transcriptPath) {
-      this._usageLabelItem.label.set_text("No active session yet");
+      row.updateUsage("Session — usage unavailable");
       return;
     }
-
     Gio.File.new_for_path(transcriptPath).load_contents_async(
       null,
       (file, result) => {
-        let text: string;
+        // The session may have retired while this async read was in flight.
+        const currentRow = this._menuRows.get(sessionId);
+        if (!currentRow) return;
+        let usageText: string;
         try {
           const [, contents] = file!.load_contents_finish(result);
-          text = `${summarizeUsage(new TextDecoder().decode(contents))}`;
+          usageText = summarizeUsage(new TextDecoder().decode(contents));
         } catch {
-          // Transcript may be mid-write, same as the state file.
-          text = "Session — usage unavailable";
+          usageText = "Session — usage unavailable";
         }
-        this._usageLabelItem.label.set_text(text);
+        currentRow.updateUsage(usageText);
       },
     );
   }
 
   private _onRefreshUsageClicked(): void {
-    this._refreshUsage();
+    this._refreshAllSessionUsage();
     this._refreshRateLimits();
   }
 
@@ -738,13 +926,11 @@ export class ClaudeWatchIndicator {
   // cycles if left connected — destroying `button` (a widget) takes its
   // child actors and menu items with it.
   destroy(): void {
-    if (this._flashTimeoutId) {
-      GLib.source_remove(this._flashTimeoutId);
-      this._flashTimeoutId = null;
-    }
-    this._clearCompactingTimeout();
-    this._stopWatchingTranscript();
-    this._label.remove_all_transitions();
+    for (const label of this._agents.values()) label.destroy();
+    this._agents.clear();
+    for (const row of this._menuRows.values()) row.destroy();
+    this._menuRows.clear();
+    this._order.length = 0;
     this._menu.disconnect(this._menuOpenStateId);
     // Nothing reads `button`/`_httpSession` after this call — extension.js
     // drops its own reference to this indicator in the same disable() that

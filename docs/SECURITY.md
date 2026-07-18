@@ -77,8 +77,9 @@ usage costs no API quota. Design constraints that keep this contained:
 - **Single fixed endpoint**: only ever talks to
   `https://api.anthropic.com/api/oauth/usage`. No user-configurable host, so
   the token can't be exfiltrated to an arbitrary destination via config.
-- **Token never touches state.json or any file the extension writes** — it
-  is read from `TOKEN_PATH` and held only in memory for the life of one
+- **Token never touches any session state file or any other file the
+  extension writes** — it is read from `TOKEN_PATH` and held only in memory
+  for the life of one
   request.
 
 If EGO review flags this, the mitigation is to ship it disabled by default
@@ -200,11 +201,17 @@ Mitigations, concrete and ongoing (not a one-time pass before submission):
 - [x] Hook handler has zero npm dependencies (reduces supply-chain surface
       to just Node's builtins) — `src/hooks/hook-handler.ts` only requires
       `fs`, `os`, `path`.
-- [ ] GC policy for stale session files verified (no unbounded growth in
-      `~/.local/state/claudewatch/`) — not applicable yet: there's a single
-      global `state.json`, not per-session files, so nothing accumulates
-      today, but there's also no GC logic to verify. Lands with the
-      per-session rework.
+- [x] GC policy for stale session files verified (no unbounded growth in
+      `~/.local/state/claudewatch/sessions/`) — three layers: the
+      `SessionEnd` hook deletes a session's file immediately (the common
+      case); `ClaudeWatchIndicator`'s `onSessionRetired` callback
+      (`extension.ts`'s `_deleteSessionFile()`) deletes it again whenever a
+      session's `AgentLabel` retires for any reason, in case `SessionEnd`
+      never fired; and a periodic `GLib.timeout_add_seconds` re-scan
+      (`PERIODIC_REFRESH_SECONDS`) re-evaluates every session's
+      pid-liveness even when nothing has touched the directory, so a
+      session whose process was killed mid-run doesn't linger forever with
+      no event left to wake the extension back up.
 - [x] SPDX GPL-2.0-or-later header on every source file — verified across
       `src/extension/extension.ts`, every file under `src/extension/lib/`, and
       `src/hooks/hook-handler.ts`.

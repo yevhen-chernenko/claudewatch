@@ -2,16 +2,18 @@
 
 import GLib from "gi://GLib";
 
-export const STATE_PATH = GLib.build_filenamev([
+export const SESSIONS_DIR = GLib.build_filenamev([
   GLib.get_user_state_dir(),
   "claudewatch",
-  "state.json",
+  "sessions",
 ]);
 
-// Parsed contents of state.json, as written by hooks/hook-handler.js. All
-// fields are optional: extension.js falls back to `{}` when the file is
-// missing or mid-write (see its _refresh()).
+// Parsed contents of one sessions/<session_id>.json file, as written by
+// hooks/hook-handler.js. All fields are optional: extension.js falls back to
+// `{}` for any file that's missing, mid-write, or fails to parse (see its
+// _loadSessions()).
 export interface SessionState {
+  session_id?: string;
   status?: string;
   updated_at?: string;
   cwd?: string;

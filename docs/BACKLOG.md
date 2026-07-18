@@ -2,8 +2,6 @@
 
 ## Features
 
-- [ ] Support multiple agents
-
 ## Bugs
 
 ## Housekeeping

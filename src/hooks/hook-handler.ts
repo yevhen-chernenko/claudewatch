@@ -9,7 +9,7 @@ const stateDir = path.join(
   process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"),
   "claudewatch",
 );
-const statePath = path.join(stateDir, "state.json");
+const sessionsDir = path.join(stateDir, "sessions");
 
 type SessionStatus = "running" | "waiting_approval" | "done" | "compacting";
 
@@ -24,6 +24,7 @@ const STATUS_BY_EVENT: Record<string, SessionStatus> = {
 
 interface HookInput {
   hook_event_name?: string;
+  session_id?: string;
   cwd?: string;
   transcript_path?: string;
   // Only present on PreCompact; "manual" for /compact, "auto" when the
@@ -33,7 +34,23 @@ interface HookInput {
   trigger?: string;
 }
 
+// session_id is a UUID in practice, but sanitize defensively before it
+// becomes part of a filesystem path — never trust hook input as a path
+// component as-is.
+function sessionFilePath(sessionId: string): string {
+  const safeId = sessionId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 200);
+  return path.join(sessionsDir, `${safeId}.json`);
+}
+
 const input = JSON.parse(fs.readFileSync(0, "utf-8")) as HookInput;
+const sessionId = input.session_id;
+if (!sessionId) process.exit(0);
+
+if (input.hook_event_name === "SessionEnd") {
+  fs.rmSync(sessionFilePath(sessionId), { force: true });
+  process.exit(0);
+}
+
 let status: SessionStatus | undefined;
 if (input.hook_event_name === "PreCompact") {
   if (input.trigger === "manual") status = "compacting";
@@ -42,11 +59,13 @@ if (input.hook_event_name === "PreCompact") {
 }
 
 if (status) {
-  fs.mkdirSync(stateDir, { recursive: true });
+  fs.mkdirSync(sessionsDir, { recursive: true });
+  const statePath = sessionFilePath(sessionId);
   const tmpPath = `${statePath}.tmp`;
   fs.writeFileSync(
     tmpPath,
     JSON.stringify({
+      session_id: sessionId,
       status,
       updated_at: new Date().toISOString(),
       cwd: input.cwd,
