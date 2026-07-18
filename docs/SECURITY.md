@@ -51,13 +51,16 @@ usage costs no API quota. Design constraints that keep this contained:
 
 - **Opt-in by construction, not a setting**: the check does nothing unless
   `~/.config/claudewatch/token` exists. The extension never creates, writes,
-  or discovers this file itself — the user creates it manually by running
-  `claude setup-token` and saving the output there (`chmod 600`). No file,
-  no network call, ever. This is a deliberately narrower trust boundary
-  than reading the interactive CLI's own live session credential
-  (`~/.claude/.credentials.json`, which some other tools read directly) —
-  ClaudeWatch only ever holds a token the user explicitly minted for this
-  purpose.
+  or discovers this file itself — the user creates it manually, normally as
+  a symlink to `~/.claude/.credentials.json` (see
+  [EXTENSION.md](EXTENSION.md#setting-up-the-claude-usage-token); the
+  endpoint requires the `user:profile` scope, which only that interactive
+  login credential carries — `claude setup-token` output lacks it and gets
+  rejected). No file, no network call, ever. The extension never goes
+  looking for `~/.claude/.credentials.json` on its own — it only ever reads
+  the one path the user explicitly pointed at a credential, and the token
+  it finds there is never written anywhere, only held in memory for one
+  request.
 - **Off by default, opt-in cadence when enabled**: clicking "Refresh Usage"
   is always available and is the only way this request fires by default. An
   "Auto-refresh on task complete" switch (`_autoRefreshItem`, unchecked on

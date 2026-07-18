@@ -16,6 +16,7 @@ import {
   TOKEN_PATH,
   RATE_LIMIT_URL,
   formatRateLimitWindow,
+  resolveToken,
 } from "./rateLimit.js";
 
 // The panel label's four states: idle ("standby", also where it lands 5s
@@ -336,18 +337,23 @@ export class ClaudeWatchIndicator {
     Gio.File.new_for_path(TOKEN_PATH).load_contents_async(
       null,
       (file, result) => {
-        let token;
+        let text;
         try {
           const [, contents] = file.load_contents_finish(result);
-          token = new TextDecoder().decode(contents).trim();
+          text = new TextDecoder().decode(contents).trim();
         } catch (e) {
           this._refreshUsageItem?.label.set_text(
             `No token file at ${TOKEN_PATH}`,
           );
           return;
         }
-        if (!token) {
+        if (!text) {
           this._refreshUsageItem?.label.set_text("Token file is empty");
+          return;
+        }
+        const { token, error } = resolveToken(text);
+        if (error) {
+          this._refreshUsageItem?.label.set_text(error);
           return;
         }
         this._probeRateLimits(token);

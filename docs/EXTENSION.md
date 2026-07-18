@@ -125,8 +125,10 @@ bottom:
     and every menu open — cheap since it's a local file read.
   - **5h** / **7d** (`_rateLimit5hItem`/`_rateLimit7dItem`) — the
     account-level rate-limit windows. Reads a bearer token from
-    `~/.config/claudewatch/token` (created out of band via `claude
-    setup-token`; the extension never writes this file) and GETs
+    `~/.config/claudewatch/token` (created out of band, normally as a
+    symlink to `~/.claude/.credentials.json` — see
+    ["Setting up the Claude Usage token"](#setting-up-the-claude-usage-token);
+    the extension never writes this file) and GETs
     `api.anthropic.com/api/oauth/usage` — a dedicated usage-status endpoint,
     not a Messages completion, so it costs no API quota to check (same
     endpoint the popular "Claude Code Usage Tracker" VS Code extension
@@ -177,23 +179,24 @@ this file itself (see
 Set it up once, by hand:
 
 ```sh
-claude setup-token
-```
-
-This opens a browser consent screen ("Claude Code would like to connect to
-your Claude chat account") and then prints a long-lived token to stdout.
-It's the same OAuth flow as a normal `claude` login, scoped for external
-tool use — not something specific to this feature, and not a training-data
-consent screen (that's a separate, account-level setting in your Claude.ai
-privacy settings, unaffected by this).
-
-Save the printed token and lock the file down to your user only:
-
-```sh
 mkdir -p ~/.config/claudewatch
-echo 'PASTE_TOKEN_HERE' > ~/.config/claudewatch/token
-chmod 600 ~/.config/claudewatch/token
+ln -s ~/.claude/.credentials.json ~/.config/claudewatch/token
 ```
+
+The token file may contain either credentials.json-format JSON (as with the
+symlink above — `resolveToken()` in `lib/rateLimit.js` extracts
+`claudeAiOauth.accessToken` from it) or a raw bearer token. The symlink is
+the form that works: `/api/oauth/usage` requires the `user:profile` scope,
+which only the interactive `claude` login credential carries — a token
+minted by `claude setup-token` has only `user:inference` and gets rejected
+with "OAuth token does not meet scope requirement user:profile". The
+raw-token form stays supported in case setup-token ever gains the scope.
+
+The symlink target is Claude Code's own credential file (already `0600`),
+and Claude Code refreshes the access token in it whenever it runs — each
+"Refresh Usage" click re-reads the file, so it always sends the current
+token. If the check reports "OAuth token expired", the fix is just to run
+`claude` once so it refreshes the credential.
 
 Then click "Refresh Usage" in the panel menu. First click after setup may
 show "No token file at …" if the file wasn't saved yet — that's the

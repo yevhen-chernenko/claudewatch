@@ -88,9 +88,10 @@ EOF
     the menu, or firing either hook event, should refresh the numbers.
   - **5h / 7d rows** — needs a token file first; see
     [EXTENSION.md](EXTENSION.md#setting-up-the-claude-usage-token) for how
-    to create `~/.config/claudewatch/token` via `claude setup-token`. They
-    stay hidden until a check succeeds, and re-hide while a new check is in
-    flight rather than showing stale numbers.
+    to create `~/.config/claudewatch/token` (normally a symlink to
+    `~/.claude/.credentials.json`). They stay hidden until a check
+    succeeds, and re-hide while a new check is in flight rather than
+    showing stale numbers.
   - **Auto-refresh on task complete** toggle — should be **off** immediately
     after enabling the extension. With it off, run the "Drive the hook
     handler directly" `Stop` event (or finish a real prompt) while the menu
@@ -109,7 +110,11 @@ EOF
     while the rate-limit request is in flight. Rename the token file
     temporarily to confirm the "No token file at …" message appears on
     this row (with both 5h/7d rows hidden) instead of a silent failure;
-    truncate it to an empty file to confirm "Token file is empty".
+    truncate it to an empty file to confirm "Token file is empty". For the
+    JSON token form, replace the file with `{}` to confirm "No
+    claudeAiOauth.accessToken in token file", and with a copy of
+    `.credentials.json` whose `expiresAt` is edited into the past to
+    confirm "OAuth token expired — run claude to refresh it".
 - **Exit** — clicking it should remove the indicator from the panel
   immediately and it should not reappear on the next login (it's gone from
   `dconf read /org/gnome/shell/enabled-extensions`) until re-enabled via
