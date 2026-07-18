@@ -184,6 +184,10 @@ export class ClaudeWatchIndicator {
     this._autoRefreshItem.connect("toggled", (_item, state: boolean) => {
       this._autoRefreshOnDone = state;
     });
+    // Default activate() chains to super.activate(), which PopupMenu treats
+    // as a close-triggering click; override so toggling never closes the
+    // menu. toggle() still flips the switch and fires "toggled" above.
+    this._autoRefreshItem.activate = () => this._autoRefreshItem.toggle();
     this._menu.addMenuItem(this._autoRefreshItem);
 
     this._notificationsItem = new PopupMenu.PopupSwitchMenuItem(
@@ -193,6 +197,7 @@ export class ClaudeWatchIndicator {
     this._notificationsItem.connect("toggled", (_item, state: boolean) => {
       this._notificationsEnabled = state;
     });
+    this._notificationsItem.activate = () => this._notificationsItem.toggle();
     this._menu.addMenuItem(this._notificationsItem);
 
     this._refreshUsageItem = new PopupMenu.PopupMenuItem("Refresh Usage");
