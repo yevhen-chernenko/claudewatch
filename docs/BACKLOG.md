@@ -13,3 +13,5 @@
       file — see SECURITY.md's hardening checklist).
 - [ ] Screenshots, description, and metadata for the extensions.gnome.org
       listing
+- [ ] Set up README
+- [ ] Set up Discussions

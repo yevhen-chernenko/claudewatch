@@ -455,12 +455,21 @@ export class ClaudeWatchIndicator {
   private readonly _refreshUsageItem: InstanceType<
     typeof PopupMenu.PopupMenuItem
   >;
+  private readonly _raiseIssueItem: InstanceType<
+    typeof PopupMenu.PopupMenuItem
+  >;
+  private readonly _viewSourceItem: InstanceType<
+    typeof PopupMenu.PopupMenuItem
+  >;
+  private readonly _discussionsItem: InstanceType<
+    typeof PopupMenu.PopupMenuItem
+  >;
   private readonly _exitItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
 
   private readonly _httpSession: InstanceType<typeof Soup.Session>;
   private readonly _onSessionRetired: (sessionId: string) => void;
   private _autoRefreshOnDone = false;
-  private _notificationsEnabled = false;
+  private _notificationsEnabled = true;
   private readonly _agents = new Map<string, AgentLabel>();
   // Insertion order, oldest first — determines which sessions show inline
   // vs. fold into the overflow chip once there are more than
@@ -519,30 +528,7 @@ export class ClaudeWatchIndicator {
     this._rateLimit7dItem.visible = false;
     this._menu.addMenuItem(this._rateLimit7dItem);
 
-    this._autoRefreshItem = new PopupMenu.PopupSwitchMenuItem(
-      "Auto-refresh on task complete",
-      false,
-    );
-    this._autoRefreshItem.connect("toggled", (_item, state: boolean) => {
-      this._autoRefreshOnDone = state;
-    });
-    // Default activate() chains to super.activate(), which PopupMenu treats
-    // as a close-triggering click; override so toggling never closes the
-    // menu. toggle() still flips the switch and fires "toggled" above.
-    this._autoRefreshItem.activate = () => this._autoRefreshItem.toggle();
-    this._menu.addMenuItem(this._autoRefreshItem);
-
-    this._notificationsItem = new PopupMenu.PopupSwitchMenuItem(
-      "Notifications",
-      false,
-    );
-    this._notificationsItem.connect("toggled", (_item, state: boolean) => {
-      this._notificationsEnabled = state;
-    });
-    this._notificationsItem.activate = () => this._notificationsItem.toggle();
-    this._menu.addMenuItem(this._notificationsItem);
-
-    this._refreshUsageItem = new PopupMenu.PopupMenuItem("Refresh Usage");
+    this._refreshUsageItem = new PopupMenu.PopupMenuItem("Show usage");
     // Default activate() chains to super.activate(), which PopupMenu treats
     // as a close-triggering click; override so clicking never closes the
     // menu. This is a manual override on top of the automatic refreshes
@@ -558,9 +544,67 @@ export class ClaudeWatchIndicator {
     });
     this._menu.addMenuItem(this._refreshUsageItem);
 
+    this._autoRefreshItem = new PopupMenu.PopupSwitchMenuItem(
+      "Auto-refresh usage",
+      false,
+    );
+    this._autoRefreshItem.connect("toggled", (_item, state: boolean) => {
+      this._autoRefreshOnDone = state;
+    });
+    // Default activate() chains to super.activate(), which PopupMenu treats
+    // as a close-triggering click; override so toggling never closes the
+    // menu. toggle() still flips the switch and fires "toggled" above.
+    this._autoRefreshItem.activate = () => this._autoRefreshItem.toggle();
+    this._menu.addMenuItem(this._autoRefreshItem);
+
+    this._menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem("Settings"));
+
+    this._notificationsItem = new PopupMenu.PopupSwitchMenuItem(
+      "Notifications",
+      true,
+    );
+    this._notificationsItem.connect("toggled", (_item, state: boolean) => {
+      this._notificationsEnabled = state;
+    });
+    this._notificationsItem.activate = () => this._notificationsItem.toggle();
+    this._menu.addMenuItem(this._notificationsItem);
+
+    this._menu.addMenuItem(
+      new PopupMenu.PopupSeparatorMenuItem("Help & Feedback"),
+    );
+
+    this._raiseIssueItem = new PopupMenu.PopupMenuItem("Raise an issue");
+    this._raiseIssueItem.connect("activate", () =>
+      Gio.AppInfo.launch_default_for_uri(
+        "https://github.com/yevhen-chernenko/claudewatch/issues",
+        null,
+      ),
+    );
+    this._menu.addMenuItem(this._raiseIssueItem);
+
+    this._discussionsItem = new PopupMenu.PopupMenuItem("Discussions");
+    this._discussionsItem.connect("activate", () =>
+      Gio.AppInfo.launch_default_for_uri(
+        "https://github.com/yevhen-chernenko/claudewatch/discussions",
+        null,
+      ),
+    );
+    this._menu.addMenuItem(this._discussionsItem);
+
+    this._viewSourceItem = new PopupMenu.PopupMenuItem(
+      "View source on GitHub",
+    );
+    this._viewSourceItem.connect("activate", () =>
+      Gio.AppInfo.launch_default_for_uri(
+        "https://github.com/yevhen-chernenko/claudewatch",
+        null,
+      ),
+    );
+    this._menu.addMenuItem(this._viewSourceItem);
+
     this._menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-    this._exitItem = new PopupMenu.PopupMenuItem("Exit");
+    this._exitItem = new PopupMenu.PopupMenuItem("Exit ClaudeWatch");
     this._exitItem.connect("activate", () => this._onExit());
     this._menu.addMenuItem(this._exitItem);
   }
@@ -661,7 +705,7 @@ export class ClaudeWatchIndicator {
   // player (same mechanism as the screenshot/volume sounds) rather than
   // spawning a subprocess, and resolves soundName against the user's
   // current sound theme rather than shipping an audio file. No-op unless
-  // the "Notifications" toggle is on (default off).
+  // the "Notifications" toggle is on (default on).
   private _notify(text: string, soundName: string): void {
     if (!this._notificationsEnabled) return;
     Main.notify("ClaudeWatch", text);
