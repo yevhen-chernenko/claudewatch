@@ -47,21 +47,21 @@ ship on the GNOME Extensions library (EGO).
 What's landed so far — per-session state machine (running / waiting_approval
 / compacting / done, one `AgentLabel` per live session) with per-session
 agent-name flavor text, multiple concurrent sessions each getting their own
-panel label (capped inline with a "+N more" overflow chip, full detail
-always in the popup menu), an opt-in "Notifications" toggle gating the
-desktop notifications wired to the `Notification`/`PermissionRequest`,
-`PreCompact` (manual trigger only), `Stop`, and `SessionEnd` hooks, a
-pid-liveness check so a killed/crashed session's leftover status doesn't
-stick, stale-session file GC (delete-on-retire plus a periodic re-scan), and
-the popup menu's per-session "Open in VS Code"/token summary, opt-in
-account-level usage/rate-limit check, and "Exit" — is documented in
+panel label (capped inline with a "+N more" overflow chip), an opt-in
+"Notifications" toggle gating the desktop notifications wired to the
+`Notification`/`PermissionRequest`, `PreCompact` (manual trigger only),
+`Stop`, and `SessionEnd` hooks, a pid-liveness check so a killed/crashed
+session's leftover status doesn't stick, stale-session file GC
+(delete-on-retire plus a periodic re-scan), and the popup menu's opt-in
+account-level usage/rate-limit check and "Exit" — is documented in
 [EXTENSION.md](EXTENSION.md). What's still ahead (preferences window, tests,
 and the EGO submission checklist) is tracked in [BACKLOG.md](BACKLOG.md)
 rather than duplicated here.
 
 - **Exit criteria**: used as an actual daily driver for a week across at
-  least two concurrent sessions (e.g. VS Code + terminal) without needing to
-  manually intervene, restart the shell, or edit state files by hand. Every
+  least two concurrent sessions (e.g. an editor + a terminal) without
+  needing to manually intervene, restart the shell, or edit state files by
+  hand. Every
   box in SECURITY.md's hardening checklist and the EGO review-guidelines
   checklist is checked, then submitted.
 

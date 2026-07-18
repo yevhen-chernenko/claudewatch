@@ -16,7 +16,6 @@ export interface SessionState {
   session_id?: string;
   status?: string;
   updated_at?: string;
-  cwd?: string;
   transcript_path?: string;
   pid?: number;
 }

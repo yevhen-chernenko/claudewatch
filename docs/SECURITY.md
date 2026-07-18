@@ -24,7 +24,7 @@ The relevant trust boundaries are:
 - **Hook handler → state files**: the state directory
   (`~/.local/state/claudewatch/`) is local-user-only. Create it `0700` and
   files `0600` so other local accounts on a shared machine can't read a
-  user's live session activity (cwd, counters, transcript path).
+  user's live session activity (counters, transcript path).
 - **State files → GNOME extension**: the extension only ever reads files it
   wrote (or that the hook handler wrote in the same schema). No parsing of
   untrusted remote input, but still validate/guard against a malformed or
@@ -68,9 +68,7 @@ usage costs no API quota. Design constraints that keep this contained:
   on, it fires once per Stop hook event (edge-triggered on the state file's
   `status` transitioning to `"done"` — see `applyState()` in
   `lib/indicator.ts`). There is no interval timer and no menu-open
-  auto-refresh either way
-  (unlike the free local session-token summary next to it, which does
-  refresh on menu open). The toggle state lives only in memory
+  auto-refresh either way. The toggle state lives only in memory
   (`this._autoRefreshOnDone`), not in a GSettings key, so it resets to off
   on every shell reload/session start rather than silently persisting an
   opt-in across sessions.

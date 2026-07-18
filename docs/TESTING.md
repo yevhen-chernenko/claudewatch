@@ -135,8 +135,6 @@ echo '{"hook_event_name":"UserPromptSubmit","session_id":"multi-3"}' | node dist
 echo '{"hook_event_name":"UserPromptSubmit","session_id":"multi-4"}' | node dist/hooks/hook-handler.js
 # with MAX_INLINE_AGENTS = 3, the 4th concurrent session should NOT get its
 # own inline label — instead the panel shows 3 labels plus a "+1 more" chip.
-# Open the popup menu and confirm all 4 sessions have their own row group
-# under "Sessions" regardless of the inline cap.
 
 echo '{"hook_event_name":"Stop","session_id":"multi-1"}' | node dist/hooks/hook-handler.js
 echo '{"hook_event_name":"Stop","session_id":"multi-2"}' | node dist/hooks/hook-handler.js
@@ -171,16 +169,6 @@ regression, not expected behavior.
 
 Click the indicator to open the menu.
 
-- **Sessions section** — hidden entirely while no session is live. With one
-  or more live (see "Multiple sessions" above), confirm one row group per
-  session:
-  - **Open &lt;name&gt; in VS Code** — greyed out until that session's `cwd`
-    is known, clickable once set; clicking opens VS Code at that directory.
-    Temporarily rename `code` off PATH to confirm the "couldn't launch"
-    notification appears instead of a silent failure.
-  - The detail line shows that session's current status and `cwd`.
-  - The usage line shows `In … · Out … · Cached …` once `transcript_path`
-    is set; reopening the menu refreshes it.
 - **Claude Usage section** — a labeled separator followed by a "Refresh
   Usage" button and the 5h/7d rows (account-level, not per-session).
   - **5h / 7d rows** — needs a token file first; see
@@ -204,9 +192,9 @@ Click the indicator to open the menu.
     transition but no `Main.notify` popup or sound fires. Turn the toggle on
     and repeat: both events should now also produce a notification + themed
     sound. Toggling should never close the popup menu.
-  - **Refresh Usage** button — clicking it should refresh every live
-    session's usage line plus the 5h/7d rows without closing the menu,
-    showing "Checking…" while the rate-limit request is in flight. Rename
+  - **Refresh Usage** button — clicking it should refresh the 5h/7d rows
+    without closing the menu, showing "Checking…" while the rate-limit
+    request is in flight. Rename
     the token file temporarily to confirm the "No token file at …" message
     appears on this row (with both 5h/7d rows hidden) instead of a silent
     failure; truncate it to an empty file to confirm "Token file is empty".

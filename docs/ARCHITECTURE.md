@@ -66,7 +66,6 @@ dead weight the hook handler has to keep in sync:
   "session_id": "abc123",
   "status": "running | waiting_approval | done | compacting",
   "updated_at": "2026-07-16T10:04:12Z",
-  "cwd": "/home/user/project",
   "transcript_path": "/home/user/.claude/.../transcript.jsonl",
   "pid": 12345,
 }
@@ -109,9 +108,8 @@ forever.
   hidden behind another session's running/idle state. Labels beyond a small
   inline cap fold into a "+N more" chip; the "Agents are recovering ☕" label shows only
   when zero sessions are live.
-- Popup menu: one row group per active session (cwd, status, local token
-  usage, "Open in VS Code" scoped to that session), plus the account-level
-  "Claude Usage" rate-limit section.
+- Popup menu: the account-level "Claude Usage" rate-limit section, plus
+  auto-refresh/notification toggles and an "Exit" action.
 - `prefs.js`: GNOME 45+ preferences window (libadwaita), separate process
   from the shell — must not import `St`/`Clutter`/`Meta`/`Shell` here. Not
   built yet — see [Install flow](#install-flow) below; the

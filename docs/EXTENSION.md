@@ -32,10 +32,7 @@ static "Agents are recovering ☕" label — it only appears once every session 
 retired, never alongside a live one.
 
 Panel space is capped: only the first `MAX_INLINE_AGENTS` (3) sessions get
-an inline label, and the rest collapse into a single "+N more" chip. Full
-detail for every live session — cwd, status, local token usage, "Open in
-VS Code" — is always in the popup menu's "Sessions" section, one row group
-per session, regardless of the inline cap.
+an inline label, and the rest collapse into a single "+N more" chip.
 
 Entering **waiting** or **complete** fires a desktop notification
 (`Main.notify`) paired with a themed system sound (`dialog-question` /
@@ -89,7 +86,6 @@ src/
     extension.ts
     lib/
       state.ts
-      usage.ts
       rateLimit.ts
       indicator.ts
   hooks/
@@ -118,32 +114,27 @@ dist/                 # build output (gitignored)
   a session that's no longer alive), and `resolveUiAction()`, the pure
   edge-detection function that decides which UI transition (if any) a given
   status change triggers for one session — reused by every live `AgentLabel`.
-- `lib/usage.ts` — `formatTokenCount()` and `summarizeUsage()`, pure
-  transcript token-counting math with no `gi://` imports.
 - `lib/rateLimit.ts` — `TOKEN_PATH`, `RATE_LIMIT_URL`, and the pure
   formatting helpers (`formatResetTime`, `formatRateLimitWindow`) for the
   account-level rate-limit check.
-- `lib/indicator.ts` — three classes: `AgentLabel` (one per live session —
+- `lib/indicator.ts` — two classes: `AgentLabel` (one per live session —
   owns its panel label widget and the pulse/notify/compacting-watch state
-  machine that used to be `ClaudeWatchIndicator`'s own), `SessionMenuRow`
-  (one per live session — the popup menu's per-session row group), and
-  `ClaudeWatchIndicator` (owns the `PanelMenu.Button`, the label box, the
-  popup menu shell, and the `Map`s of live `AgentLabel`/`SessionMenuRow`
+  machine) and `ClaudeWatchIndicator` (owns the `PanelMenu.Button`, the
+  label box, the popup menu shell, and the `Map` of live `AgentLabel`
   instances keyed by session id).
-- Two gaps in the community `@girs/gnome-shell` types (still "experimental"
-  per its own README) — `Actor.ease()` and `PopupMenu`'s
-  `"open-state-changed"` signal, both real GNOME Shell APIs the types don't
-  model — are filled with narrow local `as unknown as <Interface>` type
-  assertions at their call sites in `lib/indicator.ts`, not a shared `.d.ts`
+- A gap in the community `@girs/gnome-shell` types (still "experimental" per
+  its own README) — `Actor.ease()`, a real GNOME Shell API the types don't
+  model — is filled with a narrow local `as unknown as <Interface>` type
+  assertion at its call site in `lib/indicator.ts`, not a shared `.d.ts`
   file. A `declare module` augmentation of the `@girs/*` packages was tried
   first and corrupted unrelated type resolution across the rest of the
   program under this project's `moduleResolution: "bundler"` setup, so the
-  comment above those assertions explains the tradeoff in place instead.
+  comment above that assertion explains the tradeoff in place instead.
 
 The split keeps GNOME Shell side-effecting code (widgets, signals, main-loop
 sources, network I/O — all in `lib/indicator.ts` and `extension.ts`) separate
-from pure logic (`lib/state.ts`, `lib/usage.ts`, the formatting half of
-`lib/rateLimit.ts`) that needs no shell environment to run or test. GNOME
+from pure logic (`lib/state.ts`, the formatting half of `lib/rateLimit.ts`)
+that needs no shell environment to run or test. GNOME
 Shell's ESM extension format (45+) resolves these as ordinary relative
 imports at runtime — the `tsc` build only type-checks and downlevels syntax,
 it never rewrites import specifiers or bundles, so `dist/` is plain ESM JS
@@ -180,17 +171,15 @@ See each file's own imports for the up-to-date list; briefly, by module:
   `enable()`/`disable()` lifecycle base class).
 - `lib/indicator.ts` — `St`, `Clutter` (widget toolkit + the actor alignment
   enum), `GLib` (timeouts, easing durations), `Gio` (async file reads,
-  `Gio.Subprocess` for the VS Code launch, `Gio.Settings` for the Exit item,
-  the `/proc/<pid>` liveness check), `Main`/`PanelMenu`/`PopupMenu` (panel
-  indicator + menu widgets), and `Soup` (libsoup 3.0) — the one
-  network-capable import in the whole extension, used only by the
-  account-level rate-limit check. See
+  `Gio.Settings` for the Exit item, the `/proc/<pid>` liveness check),
+  `Main`/`PanelMenu`/`PopupMenu` (panel indicator + menu widgets), and
+  `Soup` (libsoup 3.0) — the one network-capable import in the whole
+  extension, used only by the account-level rate-limit check. See
   [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check) for
   why this is the sole exception to the local-only design.
 - `lib/state.ts`, `lib/rateLimit.ts` — `GLib` only, for XDG-respecting path
   construction (`get_user_state_dir()`/`get_user_config_dir()`) and (in
   `rateLimit.ts`) `GLib.DateTime` reset-time math.
-- `lib/usage.ts` — no `gi://` imports at all; pure string/number logic.
 
 ## Lifecycle
 
@@ -219,47 +208,29 @@ See each file's own imports for the up-to-date list; briefly, by module:
   `AgentLabel` gets `applyState()` (edge-triggered on status transitions via
   `resolveUiAction()`, same rule as the single-session version used — see
   its comment in `lib/state.ts`); a session seen for the first time only
-  gets a new `AgentLabel` (and `SessionMenuRow`) if its effective status is
-  actually live (`running`/`waiting_approval`/`compacting`) — a session
-  first seen already `done` doesn't get a label at all, so re-enabling the
-  extension doesn't replay a flash for something it never saw start. Then
-  `_syncBox()` reconciles the panel's label row against
-  `MAX_INLINE_AGENTS`/the overflow chip/the "Agents are recovering ☕" label.
-- **`_retireAgent()`** (`lib/indicator.ts`) — destroys an `AgentLabel` and
-  its `SessionMenuRow`, removes both from their maps, and calls the
-  `onSessionRetired` callback passed in from `extension.ts`, which deletes
-  that session's state file (`_deleteSessionFile()`) — the fallback GC path
-  for when `SessionEnd` didn't fire. See
+  gets a new `AgentLabel` if its effective status is actually live
+  (`running`/`waiting_approval`/`compacting`) — a session first seen already
+  `done` doesn't get a label at all, so re-enabling the extension doesn't
+  replay a flash for something it never saw start. Then `_syncBox()`
+  reconciles the panel's label row against `MAX_INLINE_AGENTS`/the overflow
+  chip/the "Agents are recovering ☕" label.
+- **`_retireAgent()`** (`lib/indicator.ts`) — destroys an `AgentLabel`,
+  removes it from `_agents`, and calls the `onSessionRetired` callback
+  passed in from `extension.ts`, which deletes that session's state file
+  (`_deleteSessionFile()`) — the fallback GC path for when `SessionEnd`
+  didn't fire. See
   [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle--state-machine).
 - **`disable()`** (`extension.ts`) — disconnects the file monitor, removes
   the periodic re-scan timeout, and calls `this._indicator.destroy()`,
-  which destroys every live `AgentLabel`/`SessionMenuRow`, disconnects the
-  menu's `open-state-changed` signal, and destroys the `PanelMenu.Button`
-  (which takes its child widgets/menu items with it). Mirrors `enable()`
-  exactly, per GNOME's enable/disable symmetry requirement.
+  which destroys every live `AgentLabel` and the `PanelMenu.Button` (which
+  takes its child widgets/menu items with it). Mirrors `enable()` exactly,
+  per GNOME's enable/disable symmetry requirement.
 
 ## Popup menu
 
 Built in `ClaudeWatchIndicator`'s constructor (`lib/indicator.ts`), top to
 bottom:
 
-- **Sessions** (`PopupSeparatorMenuItem`, hidden while no session is live)
-  followed by a `PopupMenu.PopupMenuSection` holding one `SessionMenuRow`
-  per live session, in creation order:
-  - **Open &lt;name&gt; in VS Code** — sensitive only once that session's
-    `cwd` is known; `activate` spawns `Gio.Subprocess.new(["code", cwd], …)`.
-    A thrown `GLib.Error` (e.g. `code` missing from PATH) is caught and
-    surfaced via `Main.notify` instead of failing silently.
-  - A non-reactive detail line: that session's current status
-    (`Running`/`Waiting for you`/`Compacting`/`Done`) and its `cwd`.
-  - A non-reactive usage line: local token counts for that session's
-    transcript (`In … · Out … · Cached …`), no network involved. Reads that
-    session's `transcript_path` async and hands the contents to
-    `summarizeUsage()` (`lib/usage.ts`) — a pure function that dedupes by
-    `message.id` (the transcript repeats a message once per content block)
-    and sums `input_tokens`/`output_tokens`/cache token fields from each
-    `assistant` entry's `message.usage`. Refreshes on every menu open
-    (`_refreshAllSessionUsage()`) — cheap since it's a local file read.
 - **"Claude Usage" section** — a labeled `PopupSeparatorMenuItem` heading
   the account-level rate-limit rows plus a refresh button, all
   `reactive: false` except the button:
@@ -306,12 +277,12 @@ bottom:
     (`this._notificationsEnabled`), so it resets to off on every shell
     reload, same rationale as Auto-refresh.
   - **Refresh Usage** (`_refreshUsageItem`, `PopupMenuItem`) — manual
-    override on top of the automatic refreshes above; `activate` calls both
-    `_refreshAllSessionUsage()` and `_refreshRateLimits()`. Also doubles as
-    the status display for the rate-limit check specifically — its label
-    reads "Checking…" while a request is in flight, and missing token file,
-    empty token, or a failed request all resolve to an inline error string
-    on this row instead of a silent failure.
+    override on top of the automatic refresh above; `activate` calls
+    `_refreshRateLimits()`. Also doubles as the status display for the
+    rate-limit check specifically — its label reads "Checking…" while a
+    request is in flight, and missing token file, empty token, or a failed
+    request all resolve to an inline error string on this row instead of a
+    silent failure.
 - **Exit** (`PopupMenuItem`) — removes the extension's uuid (passed into
   `ClaudeWatchIndicator`'s constructor from `this.uuid` in `extension.ts`) from
   the `org.gnome.shell` `enabled-extensions` gsetting via `Gio.Settings`.

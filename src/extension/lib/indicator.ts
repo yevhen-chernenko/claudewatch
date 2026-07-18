@@ -15,7 +15,6 @@ import {
   deriveEffectiveStatus,
   type SessionState,
 } from "./state.js";
-import { summarizeUsage } from "./usage.js";
 import {
   TOKEN_PATH,
   RATE_LIMIT_URL,
@@ -99,21 +98,13 @@ const MAX_INLINE_AGENTS = 3;
 
 type UiState = "running" | "waiting" | "complete" | "compacting";
 
-const UI_STATE_LABEL: Record<UiState, string> = {
-  running: "Running",
-  waiting: "Waiting for you",
-  compacting: "Compacting",
-  complete: "Done",
-};
-
-// Two real GNOME Shell APIs the community @girs types don't model: Actor's
-// `ease()` is JS-side sugar from environment.js (not GIR-introspected, so
-// ts-for-gir never sees it), and PopupMenu's `SignalMap` is declared but
-// left empty upstream even though it does emit "open-state-changed". A
-// `declare module` augmentation of the generated `@girs/*` packages would be
-// the usual fix, but doing so corrupts unrelated type resolution for those
-// packages under this toolchain's module setup — so these stay as narrow
-// local assertions instead of a global ambient patch.
+// Actor's `ease()` is JS-side sugar from environment.js (not
+// GIR-introspected, so ts-for-gir never sees it) — a real GNOME Shell API
+// the community @girs types don't model. A `declare module` augmentation of
+// the generated `@girs/*` packages was tried first and corrupted unrelated
+// type resolution for those packages under this toolchain's module setup,
+// so this stays as a narrow local assertion instead of a global ambient
+// patch.
 type Easeable = {
   ease(properties: {
     opacity?: number;
@@ -121,12 +112,6 @@ type Easeable = {
     mode?: Clutter.AnimationMode;
     onComplete?: () => void;
   }): void;
-};
-type MenuWithOpenStateSignal = {
-  connect(
-    sigName: "open-state-changed",
-    callback: (menu: PopupMenu.PopupMenu, open: boolean) => void,
-  ): number;
 };
 
 // A recorded pid means the hook that wrote it ran in exec form (no shell
@@ -436,70 +421,11 @@ class AgentLabel {
   }
 }
 
-// One row group in the popup menu's "Sessions" section for a single live
-// session: a clickable header ("Open <name> in VS Code", sensitive only
-// once cwd is known), a non-reactive status/location line, and a
-// non-reactive local token-usage line (refreshed separately — see
-// ClaudeWatchIndicator._refreshSessionUsage()). Kept separate from
-// AgentLabel since the panel label and the menu rows have independent
-// GNOME Shell widget lifetimes, even though they always retire together.
-class SessionMenuRow {
-  private readonly _header: InstanceType<typeof PopupMenu.PopupMenuItem>;
-  private readonly _detail: InstanceType<typeof PopupMenu.PopupMenuItem>;
-  private readonly _usage: InstanceType<typeof PopupMenu.PopupMenuItem>;
-
-  constructor(section: InstanceType<typeof PopupMenu.PopupMenuSection>) {
-    this._header = new PopupMenu.PopupMenuItem("");
-    this._detail = new PopupMenu.PopupMenuItem("", {
-      reactive: false,
-      can_focus: false,
-    });
-    this._usage = new PopupMenu.PopupMenuItem("", {
-      reactive: false,
-      can_focus: false,
-    });
-    section.addMenuItem(this._header);
-    section.addMenuItem(this._detail);
-    section.addMenuItem(this._usage);
-  }
-
-  update(agentName: string, uiState: UiState, state: SessionState): void {
-    const cwd = state.cwd;
-    this._header.label.set_text(
-      cwd ? `Open ${agentName} in VS Code` : `${agentName} — waiting for cwd`,
-    );
-    this._header.setSensitive(!!cwd);
-    this._header.activate = () => {
-      if (!cwd) return;
-      try {
-        Gio.Subprocess.new(["code", cwd], Gio.SubprocessFlags.NONE);
-      } catch {
-        Main.notify(
-          "ClaudeWatch",
-          "Couldn't launch VS Code — is `code` on your PATH?",
-        );
-      }
-    };
-    const location = cwd ?? "unknown directory";
-    this._detail.label.set_text(`${UI_STATE_LABEL[uiState]} · ${location}`);
-  }
-
-  updateUsage(text: string): void {
-    this._usage.label.set_text(text);
-  }
-
-  destroy(): void {
-    this._header.destroy();
-    this._detail.destroy();
-    this._usage.destroy();
-  }
-}
-
 // Owns the panel indicator (`this.button`, a plain `PanelMenu.Button` — not
 // subclassed, since GJS's GObject-subclassing ceremony buys nothing here
 // over composition), the row of per-session AgentLabels inside it, and the
-// popup menu: per-session rows plus the "Claude Usage" section (the opt-in
-// account-level rate-limit check). extension.js only owns directory-
+// popup menu: the "Claude Usage" section (the opt-in account-level
+// rate-limit check). extension.js only owns directory-
 // watching wiring and hands this class parsed per-session state via
 // applyStates().
 export class ClaudeWatchIndicator {
@@ -514,12 +440,6 @@ export class ClaudeWatchIndicator {
   // it's always a real PopupMenu here since we pass `false` below.
   private readonly _menu: PopupMenu.PopupMenu;
 
-  private readonly _sessionsHeading: InstanceType<
-    typeof PopupMenu.PopupSeparatorMenuItem
-  >;
-  private readonly _sessionsSection: InstanceType<
-    typeof PopupMenu.PopupMenuSection
-  >;
   private readonly _rateLimit5hItem: InstanceType<
     typeof PopupMenu.PopupMenuItem
   >;
@@ -536,14 +456,12 @@ export class ClaudeWatchIndicator {
     typeof PopupMenu.PopupMenuItem
   >;
   private readonly _exitItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
-  private readonly _menuOpenStateId: number;
 
   private readonly _httpSession: InstanceType<typeof Soup.Session>;
   private readonly _onSessionRetired: (sessionId: string) => void;
   private _autoRefreshOnDone = false;
   private _notificationsEnabled = false;
   private readonly _agents = new Map<string, AgentLabel>();
-  private readonly _menuRows = new Map<string, SessionMenuRow>();
   // Insertion order, oldest first — determines which sessions show inline
   // vs. fold into the overflow chip once there are more than
   // MAX_INLINE_AGENTS live at once.
@@ -580,13 +498,6 @@ export class ClaudeWatchIndicator {
     // Fixed width so the menu doesn't reflow as row text changes length
     // (e.g. "Checking…" vs. a long rate-limit error string).
     this._menu.box.style = "width: 300px; min-width: 300px; max-width: 300px;";
-
-    this._sessionsHeading = new PopupMenu.PopupSeparatorMenuItem("Sessions");
-    this._sessionsHeading.visible = false;
-    this._menu.addMenuItem(this._sessionsHeading);
-
-    this._sessionsSection = new PopupMenu.PopupMenuSection();
-    this._menu.addMenuItem(this._sessionsSection);
 
     this._menu.addMenuItem(
       new PopupMenu.PopupSeparatorMenuItem("Claude Usage"),
@@ -652,12 +563,6 @@ export class ClaudeWatchIndicator {
     this._exitItem = new PopupMenu.PopupMenuItem("Exit");
     this._exitItem.connect("activate", () => this._onExit());
     this._menu.addMenuItem(this._exitItem);
-
-    this._menuOpenStateId = (
-      this._menu as unknown as MenuWithOpenStateSignal
-    ).connect("open-state-changed", (_menu, open) => {
-      if (open) this._refreshAllSessionUsage();
-    });
   }
 
   // Called by extension.js with every session's freshly-parsed state-file
@@ -677,9 +582,6 @@ export class ClaudeWatchIndicator {
         existing.applyState(state, false);
         const isDoneNow: UiState = existing.uiState;
         if (!wasDone && isDoneNow === "complete") justCompleted = true;
-        this._menuRows
-          .get(sessionId)
-          ?.update(existing.agentName, existing.uiState, existing.state);
         continue;
       }
       const status = deriveEffectiveStatus(state.status, isSessionAlive(state));
@@ -719,11 +621,6 @@ export class ClaudeWatchIndicator {
     // recursion") instead of animating over time.
     this._syncBox();
     label.applyState(state, true);
-
-    const row = new SessionMenuRow(this._sessionsSection);
-    row.update(label.agentName, label.uiState, label.state);
-    this._menuRows.set(sessionId, row);
-    this._sessionsHeading.visible = true;
   }
 
   private _retireAgent(sessionId: string): void {
@@ -733,9 +630,6 @@ export class ClaudeWatchIndicator {
     this._agents.delete(sessionId);
     const orderIndex = this._order.indexOf(sessionId);
     if (orderIndex !== -1) this._order.splice(orderIndex, 1);
-    this._menuRows.get(sessionId)?.destroy();
-    this._menuRows.delete(sessionId);
-    this._sessionsHeading.visible = this._agents.size > 0;
     this._syncBox();
     this._onSessionRetired(sessionId);
   }
@@ -774,42 +668,7 @@ export class ClaudeWatchIndicator {
     global.display.get_sound_player().play_from_theme(soundName, text, null);
   }
 
-  private _refreshAllSessionUsage(): void {
-    for (const [sessionId, label] of this._agents) {
-      this._refreshSessionUsage(sessionId, label.state.transcript_path);
-    }
-  }
-
-  private _refreshSessionUsage(
-    sessionId: string,
-    transcriptPath: string | undefined,
-  ): void {
-    const row = this._menuRows.get(sessionId);
-    if (!row) return;
-    if (!transcriptPath) {
-      row.updateUsage("Session — usage unavailable");
-      return;
-    }
-    Gio.File.new_for_path(transcriptPath).load_contents_async(
-      null,
-      (file, result) => {
-        // The session may have retired while this async read was in flight.
-        const currentRow = this._menuRows.get(sessionId);
-        if (!currentRow) return;
-        let usageText: string;
-        try {
-          const [, contents] = file!.load_contents_finish(result);
-          usageText = summarizeUsage(new TextDecoder().decode(contents));
-        } catch {
-          usageText = "Session — usage unavailable";
-        }
-        currentRow.updateUsage(usageText);
-      },
-    );
-  }
-
   private _onRefreshUsageClicked(): void {
-    this._refreshAllSessionUsage();
     this._refreshRateLimits();
   }
 
@@ -921,17 +780,14 @@ export class ClaudeWatchIndicator {
     settings.set_strv("enabled-extensions", enabled);
   }
 
-  // Scoped to what this class owns: the GLib timeout and the menu signal
-  // connection are the two things that actually leak across enable/disable
-  // cycles if left connected — destroying `button` (a widget) takes its
-  // child actors and menu items with it.
+  // Scoped to what this class owns: each AgentLabel's pending GLib timeout
+  // is the thing that actually leaks across enable/disable cycles if left
+  // connected — destroying `button` (a widget) takes its child actors and
+  // menu items with it.
   destroy(): void {
     for (const label of this._agents.values()) label.destroy();
     this._agents.clear();
-    for (const row of this._menuRows.values()) row.destroy();
-    this._menuRows.clear();
     this._order.length = 0;
-    this._menu.disconnect(this._menuOpenStateId);
     // Nothing reads `button`/`_httpSession` after this call — extension.js
     // drops its own reference to this indicator in the same disable() that
     // calls destroy() — so there's no need to null them out here.

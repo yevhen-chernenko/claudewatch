@@ -16,7 +16,6 @@ const sessionsDir = path.join(stateDir, "sessions");
 interface HookInput {
   hook_event_name?: string;
   session_id?: string;
-  cwd?: string;
   transcript_path?: string;
   // Only present on PreCompact; "manual" for /compact, "auto" when the
   // context window fills up on its own. Only the former gets its own status
@@ -54,7 +53,6 @@ if (status) {
       session_id: sessionId,
       status,
       updated_at: new Date().toISOString(),
-      cwd: input.cwd,
       transcript_path: input.transcript_path,
       // Hooks run in exec form (command+args, no shell), so this is the
       // Claude Code CLI process itself — lets the extension tell a
