@@ -10,7 +10,11 @@ import * as Main from "resource:///org/gnome/shell/ui/main.js";
 import * as PanelMenu from "resource:///org/gnome/shell/ui/panelMenu.js";
 import * as PopupMenu from "resource:///org/gnome/shell/ui/popupMenu.js";
 
-import { resolveUiAction, deriveEffectiveStatus, type SessionState } from "./state.js";
+import {
+  resolveUiAction,
+  deriveEffectiveStatus,
+  type SessionState,
+} from "./state.js";
 import { summarizeUsage } from "./usage.js";
 import {
   TOKEN_PATH,
@@ -24,10 +28,28 @@ import {
 // task paused on a permission prompt or question ("waiting", pulsing blue at
 // twice the running rate so it reads as more urgent), and the 5s green flash
 // right after a task finishes ("complete").
-const STANDBY_TEXT = "Agent is resting"; // not colored
-const RUNNING_TEXT = "Agent is working"; // orange mode
-const WAITING_TEXT = "Agent needs support"; // blue mode
-const COMPLETE_TEXT = "Agent is done"; // green mode
+const STANDBY_TEXT = "All clear"; // not colored
+
+// Picked once per run (on the standby -> running transition) and reused for
+// every status text until the run falls back to standby, so "Agent Smith"
+// stays "Agent Smith" across running/waiting/complete instead of re-rolling
+// on every state-file update.
+const AGENT_NAMES = [
+  "Smith",
+  "Johnson",
+  "Thompson",
+  "Jackson",
+  "Wilson",
+  "Anderson",
+  "Robertson",
+  "Peterson",
+  "Nelson",
+  "Watson",
+];
+
+const runningText = (name: string) => `Agent ${name} is working`; // orange mode
+const waitingText = (name: string) => `Agent ${name} needs support`; // blue mode
+const completeText = (name: string) => `Agent ${name} is done`; // green mode
 
 const STANDBY_STYLE = "padding: 0 6px;";
 const RUNNING_STYLE =
@@ -117,6 +139,9 @@ export class ClaudeWatchIndicator {
   private _pulseDim = false;
   private _uiState: UiState = "standby";
   private _state: SessionState = {};
+  // Set on the standby -> running transition, cleared back to null on the
+  // return to standby; see AGENT_NAMES above.
+  private _agentName: string | null = null;
 
   constructor(uuid: string, name: string, extensionPath: string) {
     this._uuid = uuid;
@@ -278,6 +303,17 @@ export class ClaudeWatchIndicator {
     this._label.opacity = 255;
     this._label.style = STANDBY_STYLE;
     this._label.set_text(STANDBY_TEXT);
+    this._agentName = null;
+  }
+
+  // Picks the run's agent name on first use after standby; subsequent calls
+  // within the same run return the same name.
+  private _ensureAgentName(): string {
+    if (!this._agentName) {
+      this._agentName =
+        AGENT_NAMES[Math.floor(Math.random() * AGENT_NAMES.length)]; //NOSONAR - cosmetic name pick, not security-sensitive
+    }
+    return this._agentName;
   }
 
   // Task-in-flight state: slowly pulses the label orange by easing its
@@ -289,7 +325,7 @@ export class ClaudeWatchIndicator {
       this._flashTimeoutId = null;
     }
     this._label.style = RUNNING_STYLE;
-    this._label.set_text(RUNNING_TEXT);
+    this._label.set_text(runningText(this._ensureAgentName()));
     this._label.opacity = 255;
     this._pulseDim = false;
     this._pulseLoop();
@@ -307,11 +343,12 @@ export class ClaudeWatchIndicator {
       this._flashTimeoutId = null;
     }
     this._label.style = WAITING_STYLE;
-    this._label.set_text(WAITING_TEXT);
+    const text = waitingText(this._ensureAgentName());
+    this._label.set_text(text);
     this._label.opacity = 255;
     this._pulseDim = false;
     this._pulseLoop();
-    this._notify(WAITING_TEXT, "dialog-question");
+    this._notify(text, "dialog-question");
   }
 
   // Desktop notification paired with a themed system sound — every waiting/
@@ -352,8 +389,9 @@ export class ClaudeWatchIndicator {
     }
     this._label.opacity = 255;
     this._label.style = COMPLETE_STYLE;
-    this._label.set_text(COMPLETE_TEXT);
-    this._notify(COMPLETE_TEXT, "complete");
+    const text = completeText(this._ensureAgentName());
+    this._label.set_text(text);
+    this._notify(text, "complete");
     this._flashTimeoutId = GLib.timeout_add(
       GLib.PRIORITY_DEFAULT,
       COMPLETE_FLASH_MS,

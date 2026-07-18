@@ -16,6 +16,7 @@
 node_modules/
 npm-debug.log*
 dist/
+*.tsbuildinfo
 
 # Local env
 .env
