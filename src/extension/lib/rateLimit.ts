@@ -66,9 +66,10 @@ export function formatResetTime(isoString: string): string {
   return reset.format("%a %l:%M %p")?.trim() ?? "unknown";
 }
 
-// /api/oauth/usage's five_hour/seven_day fields: utilization is a 0..1
-// fraction, resets_at is an ISO 8601 timestamp. A window is absent if the
-// account has no active usage in it yet.
+// /api/oauth/usage's five_hour/seven_day fields: utilization is already a
+// 0..100 percentage (not a 0..1 fraction), resets_at is an ISO 8601
+// timestamp. A window is absent if the account has no active usage in it
+// yet.
 export interface RateLimitWindow {
   utilization?: number | null;
   resets_at?: string | null;
@@ -79,7 +80,7 @@ export function formatRateLimitWindow(
   label: string,
 ): string {
   if (window?.utilization == null) return `${label}: unavailable`;
-  const percent = Math.round(window.utilization * 100);
+  const percent = Math.round(window.utilization);
   const resetText = window.resets_at
     ? ` (resets ${formatResetTime(window.resets_at)})`
     : "";
