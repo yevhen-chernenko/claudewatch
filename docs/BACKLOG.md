@@ -3,8 +3,7 @@
 ## Features
 
 - [ ] Support multiple agents
-- [ ] Add an agent name pulled from an array;
-- [ ] Add emoji to the statuses
+
 - [ ] Separate "compacting" status for manual context compaction
       surfaced too.
 

@@ -28,7 +28,7 @@ import {
 // task paused on a permission prompt or question ("waiting", pulsing blue at
 // twice the running rate so it reads as more urgent), and the 5s green flash
 // right after a task finishes ("complete").
-const STANDBY_TEXT = "All clear"; // not colored
+const STANDBY_TEXT = "All clear 👀"; // not colored
 
 // Picked once per run (on the standby -> running transition) and reused for
 // every status text until the run falls back to standby, so "Agent Smith"
@@ -47,9 +47,9 @@ const AGENT_NAMES = [
   "Watson",
 ];
 
-const runningText = (name: string) => `Agent ${name} is working`; // orange mode
-const waitingText = (name: string) => `Agent ${name} needs support`; // blue mode
-const completeText = (name: string) => `Agent ${name} is done`; // green mode
+const runningText = (name: string) => `Agent ${name} is working 🕶️`; // orange mode
+const waitingText = (name: string) => `Agent ${name} needs support 📞`; // blue mode
+const completeText = (name: string) => `Agent ${name} is done 🎖️`; // green mode
 
 const STANDBY_STYLE = "padding: 0 6px;";
 const RUNNING_STYLE =
