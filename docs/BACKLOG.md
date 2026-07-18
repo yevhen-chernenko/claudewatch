@@ -4,9 +4,6 @@
 
 - [ ] Support multiple agents
 
-- [ ] Separate "compacting" status for manual context compaction
-      surfaced too.
-
 ## Bugs
 
 ## Housekeeping

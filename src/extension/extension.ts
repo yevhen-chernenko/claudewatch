@@ -14,11 +14,7 @@ export default class ClaudeWatchExtension extends Extension {
   private _monitorId = 0;
 
   enable(): void {
-    this._indicator = new ClaudeWatchIndicator(
-      this.uuid,
-      this.metadata.name,
-      this.path,
-    );
+    this._indicator = new ClaudeWatchIndicator(this.uuid, this.metadata.name);
     Main.panel.addToStatusArea(this.uuid, this._indicator.button);
 
     this._stateFile = Gio.File.new_for_path(STATE_PATH);

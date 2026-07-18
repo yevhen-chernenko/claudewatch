@@ -24,12 +24,12 @@ import {
 } from "./rateLimit.js";
 
 // The panel label's five states: idle ("standby", also where it lands 5s
-// after a task finishes), a task in flight ("running", pulsing orange), the
-// task paused on a permission prompt or question ("waiting", pulsing blue at
-// twice the running rate so it reads as more urgent), a manual /compact in
-// progress ("compacting", pulsing purple at the same rate as running), and
-// the 5s green flash right after a task finishes ("complete").
-const STANDBY_TEXT = "All clear 👀"; // not colored
+// after a task finishes; static dark background, no pulse), a task in
+// flight ("running", pulsing), the task paused on a permission prompt or
+// question ("waiting", static — no pulse), a manual /compact in progress
+// ("compacting", pulsing at the same rate as running), and the 5s flash
+// right after a task finishes ("complete", static).
+const STANDBY_TEXT = "All clear 👀";
 
 // Picked once per run (on the standby -> running transition) and reused for
 // every status text until the run falls back to standby, so "Agent Smith"
@@ -48,24 +48,28 @@ const AGENT_NAMES = [
   "Watson",
 ];
 
-const runningText = (name: string) => `Agent ${name} is working 🕶️`; // orange mode
-const waitingText = (name: string) => `Agent ${name} needs support 📞`; // blue mode
-const completeText = (name: string) => `Agent ${name} is done 🎖️`; // green mode
-const COMPACTING_TEXT = "Agents are training 🔫"; // purple mode; no agent name — it isn't retained into the next session
+const runningText = (name: string) => `Agent ${name} is working 🕶️`;
+const waitingText = (name: string) => `Agent ${name} needs support 📞`;
+const completeText = (name: string) => `Agent ${name} is done 🎖️`;
+const COMPACTING_TEXT = "Agents are training 🔫"; // no agent name — it isn't retained into the next session
 
-const STANDBY_STYLE = "padding: 0 6px;";
+// Backgrounds are all white-text-on-color, AA-contrast checked (≥4.5:1
+// against #ffffff at this weight/size).
+const STANDBY_STYLE =
+  "padding: 0 6px; background-color: #333a3d; border-radius: 4px; color: #ffffff;"; // 11.6:1
 const RUNNING_STYLE =
-  "padding: 0 6px; background-color: #e67e22; border-radius: 4px;";
+  "padding: 0 6px; background-color: #a0450a; border-radius: 4px; color: #ffffff;"; // 6.27:1
 const WAITING_STYLE =
-  "padding: 0 6px; background-color: #3498db; border-radius: 4px;";
+  "padding: 0 6px; background-color: #2457c5; border-radius: 4px; color: #ffffff;"; // 6.47:1
 const COMPLETE_STYLE =
-  "padding: 0 6px; background-color: #2ecc71; border-radius: 4px;";
+  "padding: 0 6px; background-color: #1a7a43; border-radius: 4px; color: #ffffff;"; // 5.37:1
 const COMPACTING_STYLE =
-  "padding: 0 6px; background-color: #9b59b6; border-radius: 4px;";
+  "padding: 0 6px; background-color: #7a3fa0; border-radius: 4px; color: #ffffff;"; // 6.89:1
 const COMPLETE_FLASH_MS = 5000;
-const RUNNING_PULSE_MS = 1200;
-const WAITING_PULSE_MS = 600;
-const COMPACTING_PULSE_MS = 1200;
+// Full pulse cycle (dim -> bright -> dim) is 2x this, matching the
+// pulseGlow keyframes' 2.6s cycle; opacity floor is 72% of 255.
+const PULSE_HALF_CYCLE_MS = 1300;
+const PULSE_DIM_OPACITY = Math.round(255 * 0.72);
 // Claude Code only writes a hook-triggered state.json update for a
 // *completed* compaction (PreCompact then, eventually, some later event once
 // the session resumes) — cancelling a manual /compact mid-flight fires no
@@ -120,9 +124,7 @@ export class ClaudeWatchIndicator {
   button: InstanceType<typeof PanelMenu.Button>;
 
   private readonly _uuid: string;
-  private readonly _icon: InstanceType<typeof St.Icon>;
   private readonly _label: InstanceType<typeof St.Label>;
-  private readonly _box: InstanceType<typeof St.BoxLayout>;
   // `PanelMenu.Button.menu` is typed as `PopupMenu | PopupDummyMenu` since
   // the ambient types don't narrow on the dontCreateMenu constructor arg;
   // it's always a real PopupMenu here since we pass `false` below.
@@ -171,29 +173,18 @@ export class ClaudeWatchIndicator {
   // return to standby; see AGENT_NAMES above.
   private _agentName: string | null = null;
 
-  constructor(uuid: string, name: string, extensionPath: string) {
+  constructor(uuid: string, name: string) {
     this._uuid = uuid;
 
     this.button = new PanelMenu.Button(0.0, name, false);
     this._menu = this.button.menu as PopupMenu.PopupMenu;
 
-    this._icon = new St.Icon({
-      gicon: Gio.icon_new_for_string(
-        `${extensionPath}/icons/claudewatch-symbolic.svg`,
-      ),
-      icon_size: 16,
-      y_align: Clutter.ActorAlign.CENTER,
-      style: "padding-right: 6px;",
-    });
     this._label = new St.Label({
       text: STANDBY_TEXT,
       y_align: Clutter.ActorAlign.CENTER,
       style: STANDBY_STYLE,
     });
-    this._box = new St.BoxLayout({ y_align: Clutter.ActorAlign.CENTER });
-    this._box.add_child(this._icon);
-    this._box.add_child(this._label);
-    this.button.add_child(this._box);
+    this.button.add_child(this._label);
 
     // Fixed width so the menu doesn't reflow as row text changes length
     // (e.g. "Checking…" vs. a long rate-limit error string).
@@ -385,22 +376,21 @@ export class ClaudeWatchIndicator {
   }
 
   // Paused-on-prompt state: Claude stopped to ask for a permission or a
-  // question and is waiting on the user. Same pulse as _enterRunning() but
-  // blue and twice as fast, so it reads as more urgent than plain progress.
-  // Also fires a desktop notification since the panel alone is easy to miss
-  // while Claude is genuinely blocked on the user.
+  // question and is waiting on the user. Static (no pulse) — the color and
+  // text alone are enough to flag it. Also fires a desktop notification
+  // since the panel alone is easy to miss while Claude is genuinely blocked
+  // on the user.
   private _enterWaiting(): void {
     this._uiState = "waiting";
     if (this._flashTimeoutId) {
       GLib.source_remove(this._flashTimeoutId);
       this._flashTimeoutId = null;
     }
+    this._label.remove_all_transitions();
     this._label.style = WAITING_STYLE;
     const text = waitingText(this._ensureAgentName());
     this._label.set_text(text);
     this._label.opacity = 255;
-    this._pulseDim = false;
-    this._pulseLoop();
     this._notify(text, "dialog-question");
   }
 
@@ -545,17 +535,14 @@ export class ClaudeWatchIndicator {
     global.display.get_sound_player().play_from_theme(soundName, text, null);
   }
 
+  // Only "running" and "compacting" pulse — "waiting" reads clearly enough
+  // from its color/text alone and stays static, same as standby/complete.
   private _pulseLoop(): void {
-    let pulseDuration: number | null = null;
-    if (this._uiState === "running") pulseDuration = RUNNING_PULSE_MS;
-    else if (this._uiState === "waiting") pulseDuration = WAITING_PULSE_MS;
-    else if (this._uiState === "compacting")
-      pulseDuration = COMPACTING_PULSE_MS;
-    if (!pulseDuration) return;
+    if (this._uiState !== "running" && this._uiState !== "compacting") return;
     this._pulseDim = !this._pulseDim;
     (this._label as unknown as Easeable).ease({
-      opacity: this._pulseDim ? 120 : 255,
-      duration: pulseDuration,
+      opacity: this._pulseDim ? PULSE_DIM_OPACITY : 255,
+      duration: PULSE_HALF_CYCLE_MS,
       mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
       onComplete: () => this._pulseLoop(),
     });
