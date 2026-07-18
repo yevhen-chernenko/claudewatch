@@ -1,15 +1,15 @@
 # Roadmap
 
-Status: planning draft, no implementation yet. See [ARCHITECTURE.md](ARCHITECTURE.md)
-for the technical design these phases build toward and [SECURITY.md](SECURITY.md)
-for the review/security bar every phase is held to.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the technical design these phases
+build toward, [SECURITY.md](SECURITY.md) for the review/security bar every
+phase is held to, and [BACKLOG.md](BACKLOG.md) for the concrete wishlist and
+bug tracker — this doc stays high-level on purpose.
 
 ## Principles
 
 - **Security and reviewability are not a phase — they're a constant.** Every
   phase below ships within the constraints in SECURITY.md, not just the
-  final "hardening" one. The hardening phase is a _gate_, not where security
-  gets added.
+  final "hardening" one.
 - **Local-only, always.** No network calls in v1, full stop. If that ever
   changes it's a deliberate, disclosed, opt-in decision — not default
   behavior.
@@ -20,183 +20,66 @@ for the review/security bar every phase is held to.
   (Claude + Codex + Copilot) is a separate, later project. Don't let it leak
   into ClaudeWatch's scope.
 
-## Phase 0 — Throwaway prototype (Argos)
+## Phase 0 — Foundation (done)
 
-Goal: prove the hook → state → panel pipeline works end to end before
-writing any real extension boilerplate.
+Goal: prove the hook → state → panel pipeline works end to end, then build a
+real extension skeleton around it. Result: a workable extension, ready for
+features.
 
-- Wire a minimal hook config in `~/.claude/settings.json` for `SessionStart`,
-  `PreToolUse`/`PostToolUse`, `Notification`, `Stop` pointed at a scratch
-  script.
-- Scratch script appends/overwrites a JSON file per the draft schema in
-  ARCHITECTURE.md.
-- An Argos (or GNOME 45+ fork) script reads that file and renders a static
-  status string in the panel — no real `PanelMenu.Button`, no menu, no
-  prefs.
-- **Exit criteria**: you've watched a real Claude Code session flip the
-  panel text through idle → running → waiting_approval → done at least
-  once, and you're confident the hook events actually fire the way the docs
-  say they do (event names, payload shape, timing) in your actual Claude
-  Code version.
-- Nothing from this phase ships. Delete or archive it once Phase 1 starts.
+- Hook wiring validated against a throwaway Argos prototype — event names,
+  payload shape, and timing confirmed against real Claude Code sessions.
+- Real extension skeleton: ESM `extension.js`, symmetric `enable()`/
+  `disable()`, a `PanelMenu.Button`, a `Gio.FileMonitor` on the sessions
+  directory.
+- Hook handler: plain Node, zero dependencies, writes the state file
+  atomically and handles concurrent sessions without a lock.
+- Extension identity locked in: name "ClaudeWatch for GNOME", uuid
+  `claudewatch@yevhen-chernenko.github.io`, repo slug `claudewatch`, config/
+  state paths under `~/.config/claudewatch/` and `~/.local/state/claudewatch/`.
+- TypeScript sources under `src/`, compiled to `dist/` dev-time only; `strict`
+  mode on across the extension and `hooks/hook-handler.js`.
 
-## Phase 1 — Foundation
+## Phase 1 — MVP (current phase)
 
-Goal: real extension skeleton and real hook handler, but state machine and
-UI are minimal. This phase is about getting the _shape_ of both halves
-right, since some of these decisions (extension UUID, schema ID, state file
-format) are expensive to change later.
+Goal: the feature set described in the brief, working locally, and ready to
+ship on the GNOME Extensions library (EGO).
 
-- Hook handler: plain Node, zero dependencies, single file. Writes the
-  per-session state file atomically. Handles being invoked concurrently
-  across multiple sessions (see per-session-file design in ARCHITECTURE.md)
-  without needing a lock.
-- Pin the extension UUID and GSettings schema ID now — both are load-bearing
-  for later installs and hard to change after real users have it installed.
-- **Rename actioned**: app display name → "ClaudeWatch for GNOME", uuid →
-  `claudewatch@yevhen-chernenko.github.io`, repo slug → `claudewatch` (from
-  CodeWatch/codewatch). `extension/metadata.json` (`name`, `uuid`, `url`),
-  every `Main.notify(...)` call site, config/state path segments
-  (`~/.config/claudewatch/`, `~/.local/state/claudewatch/`), README.md, and
-  the doc headers under `docs/` are updated. Still outstanding, as separate
-  externally-visible steps: renaming the actual GitHub repository and git
-  remote URL, and — since no real installs exist yet, so this is still safe
-  to do now rather than expensive later — recreating the GNOME Shell
-  extension symlink under the new uuid and migrating any existing
-  `~/.config/codewatch/` / `~/.local/state/codewatch/` contents to their
-  `claudewatch` paths.
-- GNOME extension skeleton: ESM `extension.js`, `enable()`/`disable()` with
-  full symmetry from the very first commit (not retrofitted later), a
-  `PanelMenu.Button` with a static icon, a `Gio.FileMonitor` on the sessions
-  directory that logs to console but doesn't drive UI yet.
-- `metadata.json` with an honest, narrow `shell-version` list — check
-  currently-supported GNOME releases at the time you write this, don't
-  guess from training data.
-- **Exit criteria**: extension loads via `gnome-extensions enable`, survives
-  repeated enable/disable cycles with no leaked signals/sources (spot-check
-  with `looking glass` / `journalctl --user -f` for warnings), and reacts to
-  a hook-written state file appearing on disk.
+What's landed so far — core state machine (standby / running /
+waiting_approval / done), desktop notifications wired to the
+`Notification`/`PermissionRequest` and `Stop` hooks, and the popup menu's
+"Open in VS Code", session token summary, opt-in usage/rate-limit check, and
+"Exit" — is documented in [EXTENSION.md](EXTENSION.md). What's still ahead
+(per-session breakdown, notification toggle, compacting status, preferences
+window, stale-session GC, tests, and the EGO submission checklist) is tracked
+in [BACKLOG.md](BACKLOG.md) rather than duplicated here.
 
-## Phase 2 — v1 MVP
+- **Exit criteria**: used as an actual daily driver for a week across at
+  least two concurrent sessions (e.g. VS Code + terminal) without needing to
+  manually intervene, restart the shell, or edit state files by hand. Every
+  box in SECURITY.md's hardening checklist and the EGO review-guidelines
+  checklist is checked, then submitted.
 
-Goal: the feature set described in the brief, fully working, locally, for a
-single user running Claude Code from VS Code and/or a terminal.
+## Phase 2 — Beta
 
-Checkboxes track what's actually landed in the current interim
-single-state-file implementation (see [EXTENSION.md](EXTENSION.md) for what
-exists today) versus what's still ahead — this list is a plan, not a
-changelog, so keep it in sync as items ship rather than trusting it blindly.
+Goal: published and installable from EGO, but openly framed as Early Access —
+bugs are still expected, and the point of this phase is to surface them
+against real users and real machines rather than just your own daily driving.
 
-- [x] Core state machine: standby / running / waiting_approval / done,
-  implemented against the current single global `state.json`. Aggregate
-  panel icon across concurrent sessions (priority order per
-  ARCHITECTURE.md) is **not** done yet — that needs the per-session file
-  layout from ARCHITECTURE.md first, since right now `cwd`/`status`/
-  `transcript_path` just reflect whichever session last fired a hook.
-- [ ] Popup menu: per-session breakdown (cwd, status, mechanical counters:
-  commands run, files edited) plus aggregate view. _Shipped so far, ahead of
-  and independent from this per-session design: "Open in VS Code", a local
-  session token summary, an opt-in "Claude Usage" rate-limit check, and
-  "Exit" — see [EXTENSION.md](EXTENSION.md#popup-menu). None of these are
-  session-scoped yet, since there's still only one state file._
-- [x] Desktop notifications: permission-needed and run-finished, wired to
-  the `Notification`/`PermissionRequest` and `Stop` hooks respectively, each
-  paired with a themed system sound (`Main.notify` + `play_from_theme`, see
-  `_notify()` in `src/extension/lib/indicator.ts`). **Not yet toggleable** —
-  there is no prefs window yet at all, see the mute-toggle and preferences
-  items below.
-- [ ] Mute-notifications toggle (muted by default) gating the desktop
-  notifications above, mirroring the existing "Auto-refresh on task
-  complete" opt-in toggle pattern in the popup menu.
-- [ ] Separate "compacting" status for manual context compaction: `PreCompact`
-  (matcher `manual`) enters it, `PostCompact` clears it back to standby.
-  Deliberately scoped to the manual `/compact` path only — the matcher
-  distinction lives in the hook routing config, not the payload, so the
-  `auto` matcher stays unwired unless a later decision explicitly wants
-  auto-compaction surfaced too.
-- [ ] Mechanical recap counters only — no semantic summarization yet (that's
-  Phase 4, explicitly a stretch goal per the brief). `hook-handler.js`
-  doesn't track `tool_calls`/`files_edited`/`commands_run` yet, only
-  `status`/`cwd`/`transcript_path`.
-- [ ] Preferences window (libadwaita, separate process): notification toggles,
-  stale-session GC threshold, and the hook install/uninstall action from
-  ARCHITECTURE.md's install flow (explicit action, backup, merge, reversible).
-- [ ] Stale-session GC running on a periodic timeout, verified not to leak or
-  grow unbounded. Not applicable yet to the single global state file; lands
-  with the per-session rework.
-- [x] TypeScript: real `.ts` sources under `src/`, compiled by `tsc` to
-  `dist/` (see [EXTENSION.md](EXTENSION.md#file-layout)), superseding the
-  JSDoc+`checkJs` approach originally sketched here. The compile step is
-  dev-time only — the packaged extension still ships plain ESM JS with no
-  bundler and nothing for an end user (or EGO's review) to build; `dist/`
-  is gitignored and regenerated via `npm run build`. `strict` mode is on
-  across both the extension and `hooks/hook-handler.js`. Also directly
-  targets EGO's "imaginary API usage" rejection criterion (SECURITY.md) by
-  catching calls to APIs that don't actually exist at check time instead of
-  only at review time.
-- [ ] Vitest, scoped to what's actually pure and host-independent:
-  `src/extension/lib/state.ts`'s `resolveUiAction()`,
-  `src/extension/lib/usage.ts`, the formatting half of
-  `src/extension/lib/rateLimit.ts`, and `src/hooks/hook-handler.ts`'s
-  event-to-status mapping. Everything that touches `gi://`/`Main`/`Soup`
-  stays out of unit-test scope per this project's testing philosophy
-  (behavior-driven, mock only at real system boundaries, extract pure
-  helpers rather than mock shell internals) — that's what
-  [TESTING.md](TESTING.md)'s manual pass is for. The Phase 2
-  `extension/lib/` split already isolated exactly the functions this would
-  cover.
-- **Exit criteria**: you use it as your actual daily driver for a week
-  across at least two concurrent sessions (e.g. VS Code + terminal) without
-  needing to manually intervene, restart the shell, or edit state files by
-  hand. Every box in SECURITY.md's hardening checklist is checked.
+- Listing stays up, but README/description are explicit that this is a beta:
+  known-rough edges, feedback wanted, no stability guarantee yet.
+- Incoming bug reports get triaged straight into [BACKLOG.md](BACKLOG.md)'s
+  Bugs section.
+- **Exit criteria**: no known critical/data-loss bugs open, and enough real
+  user feedback has come in (not just your own usage) to be confident the
+  extension behaves reasonably across GNOME versions and setups you don't
+  personally run.
 
-## Phase 3 — EGO submission readiness
+## Phase 3 — Ongoing development (open source)
 
-Goal: gate before publishing. Nothing new functionally — this phase is an
-audit, not a feature phase.
-
-- Full pass against the [review guidelines checklist](SECURITY.md#gnome-shell-extension-review-guidelines-ego),
-  re-fetched fresh from gjs.guide (guidelines change; don't trust this
-  planning doc's snapshot).
-- Dedicated self-review pass against the AI-generated-code rejection
-  criteria (SECURITY.md) — separate from a correctness review.
-- SPDX GPL-2.0-or-later headers on every source file; confirm no
-  incompatible license leaked in via a copy-pasted snippet.
-- Screenshots, description, and metadata written for the extensions.gnome.org
-  listing — description explicitly states the local-only/no-network
-  guarantee, since that's a real differentiator and a fair thing to ask
-  reviewers/users to trust without just taking your word for it (point at
-  the code).
-- Confirm no `.claude/`, scratch files, or planning docs (this directory
-  included, if you don't want it public) ship in the packaged zip —
-  `gnome-extensions pack` output should be diffed against the repo before
-  upload.
-- Submit. Expect review latency and possibly a back-and-forth round with
-  reviewers — budget calendar time, not engineering time, for this step.
-
-## Phase 4 — Stretch: semantic recap (post-v1, explicitly v2)
-
-Only after Phase 3 ships and the mechanical version has been used for a
-while. Per the brief, this costs real tokens, so it needs its own design
-pass on cost/opt-in behavior before starting:
-
-- Use `transcript_path` from hook payloads to tail the session JSONL for
-  Claude's latest text/plan snippet, or a `prompt`-type hook with a cheap
-  model call to summarize current activity.
-- Must be opt-in and clearly disclosed — this is the one place the local-only
-  guarantee could break (a `prompt`-type hook call goes over the network to
-  a model), so it needs its own line in SECURITY.md's threat model when it
-  lands, not a silent extension of "no network calls."
-- Re-evaluate the daemon+socket architecture note in ARCHITECTURE.md's open
-  questions if transcript-tailing needs lower latency than periodic file
-  polling gives.
-
-## Milestone summary
-
-| Phase              | Ships to users?                              | Primary risk being retired                                           |
-| ------------------ | -------------------------------------------- | -------------------------------------------------------------------- |
-| 0 — Prototype      | No                                           | Hook wiring assumptions might be wrong                               |
-| 1 — Foundation     | No                                           | Extension-shape decisions that are expensive to change later         |
-| 2 — v1 MVP         | Optionally, informally (e.g. share the repo) | Feature completeness, daily-driver stability                         |
-| 3 — EGO readiness  | Submission                                   | Review rejection (guideline compliance, AI-code policy)              |
-| 4 — Semantic recap | Yes, as v2                                   | Network/cost/opt-in design for the one feature that isn't local-only |
+Not time-boxed. Once Phase 2 stabilizes, development continues indefinitely
+as an open-source project — priorities come from [BACKLOG.md](BACKLOG.md) and
+whatever issues/contributions come in, not a fixed plan. This includes
+stretch goals like the opt-in semantic recap (tailing `transcript_path` or a
+`prompt`-type hook to summarize activity), which — per the brief — is the one
+feature that would need its own network/cost/opt-in design pass and a
+dedicated SECURITY.md threat-model entry before it could land.
