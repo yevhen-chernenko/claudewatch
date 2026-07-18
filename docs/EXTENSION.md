@@ -7,8 +7,8 @@ in Phase 2, and [ROADMAP.md](ROADMAP.md) for phase context.
 ## What it does
 
 Shows a panel indicator with a label that reflects Claude Code's current
-activity, read from a JSON state file written by
-[hooks/hook-handler.js](../hooks/hook-handler.js):
+activity, read from a JSON state file written by the compiled
+[hooks/hook-handler.js](../src/hooks/hook-handler.ts):
 
 ```text
 ${XDG_STATE_HOME:-~/.local/state}/claudewatch/state.json
@@ -21,50 +21,101 @@ rate so it reads as more urgent), and the 5s flash right after a task
 finishes (**complete**, green). Entering **waiting** or **complete** also
 fires a desktop notification (`Main.notify`) paired with a themed system
 sound (`dialog-question` / `complete`) — see `_notify()` in
-[lib/indicator.js](../extension/lib/indicator.js) — since the panel alone is
-easy to miss.
+[lib/indicator.ts](../src/extension/lib/indicator.ts) — since the panel alone
+is easy to miss.
 
 ## File layout
 
+Source lives under `src/`, written in TypeScript; `npm run build` compiles it
+with `tsc` into `dist/` (gitignored), which is the actual installable
+extension directory / the path a `~/.claude/settings.json` hook entry should
+point `hooks/hook-handler.js` at. See [Building](#building) below.
+
 ```text
-extension/
-  extension.js
-  lib/
-    state.js
-    usage.js
-    rateLimit.js
-    indicator.js
+src/
+  extension/
+    extension.ts
+    lib/
+      state.ts
+      usage.ts
+      rateLimit.ts
+      indicator.ts
+  hooks/
+    hook-handler.ts
+extension/            # static assets only — copied into dist/extension/ as-is
+  metadata.json
+  icons/
+dist/                 # build output (gitignored)
+  extension/
+    extension.js
+    metadata.json
+    icons/
+    lib/*.js
+  hooks/
+    hook-handler.js
 ```
 
-- `extension.js` — the `Extension` subclass: `enable()`/`disable()` and
+- `extension.ts` — the `Extension` subclass: `enable()`/`disable()` and
   file-monitor wiring only. No widget or state-machine logic lives here —
-  see `lib/indicator.js`.
-- `lib/state.js` — `STATE_PATH` and `resolveUiAction()`, the pure
-  edge-detection function that decides which UI transition (if any) a given
-  status change triggers.
-- `lib/usage.js` — `formatTokenCount()` and `summarizeUsage()`, pure
+  see `lib/indicator.ts`.
+- `lib/state.ts` — `STATE_PATH`, the `SessionState` shape of state.json, and
+  `resolveUiAction()`, the pure edge-detection function that decides which UI
+  transition (if any) a given status change triggers.
+- `lib/usage.ts` — `formatTokenCount()` and `summarizeUsage()`, pure
   transcript token-counting math with no `gi://` imports.
-- `lib/rateLimit.js` — `TOKEN_PATH`, `RATE_LIMIT_URL`, and the pure
+- `lib/rateLimit.ts` — `TOKEN_PATH`, `RATE_LIMIT_URL`, and the pure
   formatting helpers (`formatResetTime`, `formatRateLimitWindow`) for the
   rate-limit check.
-- `lib/indicator.js` — `ClaudeWatchIndicator`, which owns the
+- `lib/indicator.ts` — `ClaudeWatchIndicator`, which owns the
   `PanelMenu.Button`, the popup menu, the pulse/notify state machine, and
   the rate-limit HTTP fetch (the only place `Soup` is used).
+- Two gaps in the community `@girs/gnome-shell` types (still "experimental"
+  per its own README) — `Actor.ease()` and `PopupMenu`'s
+  `"open-state-changed"` signal, both real GNOME Shell APIs the types don't
+  model — are filled with narrow local `as unknown as <Interface>` type
+  assertions at their two call sites in `lib/indicator.ts`, not a shared
+  `.d.ts` file. A `declare module` augmentation of the `@girs/*` packages was
+  tried first and corrupted unrelated type resolution across the rest of the
+  program under this project's `moduleResolution: "bundler"` setup, so the
+  comment above those two assertions explains the tradeoff in place instead.
 
 The split keeps GNOME Shell side-effecting code (widgets, signals, main-loop
-sources, network I/O — all in `lib/indicator.js` and `extension.js`) separate
-from pure logic (`lib/state.js`, `lib/usage.js`, the formatting half of
-`lib/rateLimit.js`) that needs no shell environment to run or test. GNOME
+sources, network I/O — all in `lib/indicator.ts` and `extension.ts`) separate
+from pure logic (`lib/state.ts`, `lib/usage.ts`, the formatting half of
+`lib/rateLimit.ts`) that needs no shell environment to run or test. GNOME
 Shell's ESM extension format (45+) resolves these as ordinary relative
-imports; no bundler or build step is involved.
+imports at runtime — the `tsc` build only type-checks and downlevels syntax,
+it never rewrites import specifiers or bundles, so `dist/` is plain ESM JS
+GNOME Shell loads exactly as it always has.
+
+## Building
+
+```sh
+npm install   # once
+npm run build       # compiles src/ -> dist/, copies metadata.json + icons/
+npm run typecheck   # type-check only, no output — fast loop while editing
+```
+
+`dist/` is what you point a symlink or `gnome-extensions pack` at; it's
+gitignored and always regenerated from `src/`, never hand-edited.
+
+For local dev, symlink `dist/extension` (not `extension/` — that's static
+assets only) into GNOME Shell's extensions directory under the UUID from
+`extension/metadata.json`, then reload the shell (X11: Alt+F2, `r`; Wayland:
+log out/in) so it picks up the new symlink:
+
+```sh
+ln -s "$PWD/dist/extension" ~/.local/share/gnome-shell/extensions/claudewatch@yevhen-chernenko.github.io
+gnome-extensions enable claudewatch@yevhen-chernenko.github.io
+```
 
 ## Imports
 
 See each file's own imports for the up-to-date list; briefly, by module:
 
-- `extension.js` — `Gio` (file + file monitor), `Main` (`Main.panel.addToStatusArea`),
+- `extension.ts` — `Gio` (file + file monitor), `Main` (`Main.panel.addToStatusArea`),
   `Extension` (the `enable()`/`disable()` lifecycle base class).
-- `lib/indicator.js` — `St`, `Clutter` (widget toolkit + the actor alignment
+- `lib/indicator.ts` — `St`, `Clutter` (widget toolkit + the actor alignment
   enum), `GLib` (timeouts, easing durations), `Gio` (async file reads,
   `Gio.Subprocess` for the VS Code launch, `Gio.Settings` for the Exit item),
   `Main`/`PanelMenu`/`PopupMenu` (panel indicator + menu widgets), and `Soup`
@@ -72,31 +123,31 @@ See each file's own imports for the up-to-date list; briefly, by module:
   only by the rate-limit check. See
   [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check) for
   why this is the sole exception to the local-only design.
-- `lib/state.js`, `lib/rateLimit.js` — `GLib` only, for XDG-respecting path
+- `lib/state.ts`, `lib/rateLimit.ts` — `GLib` only, for XDG-respecting path
   construction (`get_user_state_dir()`/`get_user_config_dir()`) and (in
-  `rateLimit.js`) `GLib.DateTime` reset-time math.
-- `lib/usage.js` — no `gi://` imports at all; pure string/number logic.
+  `rateLimit.ts`) `GLib.DateTime` reset-time math.
+- `lib/usage.ts` — no `gi://` imports at all; pure string/number logic.
 
 ## Lifecycle
 
-- **`enable()`** (`extension.js`) — constructs a `ClaudeWatchIndicator`
-  (`lib/indicator.js`), adds its `button` to the panel via
+- **`enable()`** (`extension.ts`) — constructs a `ClaudeWatchIndicator`
+  (`lib/indicator.ts`), adds its `button` to the panel via
   `Main.panel.addToStatusArea`, starts a `Gio.FileMonitor` on the state file,
   and does one initial `_refresh()`. Everything created here is torn down in
   `disable()` — required for EGO review (extensions must not leak
   signals/sources across disable/re-enable cycles).
-- **`_refresh()`** (`extension.js`) — reads the state file async and hands
+- **`_refresh()`** (`extension.ts`) — reads the state file async and hands
   the parsed JSON to `this._indicator.applyState(state)`. Falls back to `{}`
   if the file doesn't exist yet or is mid-write (the hook handler writes
   atomically via `.tmp` + rename, but the file can still be briefly absent
   between mkdir and the first write).
-- **`ClaudeWatchIndicator.applyState()`** (`lib/indicator.js`) — stores the
+- **`ClaudeWatchIndicator.applyState()`** (`lib/indicator.ts`) — stores the
   state, refreshes the local usage row, and runs it through
   `resolveUiAction()` to decide whether to transition the label (edge-
   triggered on `status` changes, not every file-monitor event — see the
-  function's own comment in `lib/state.js` for why the very first refresh
+  function's own comment in `lib/state.ts` for why the very first refresh
   after `enable()` is deliberately not treated as an edge).
-- **`disable()`** (`extension.js`) — disconnects the file monitor and calls
+- **`disable()`** (`extension.ts`) — disconnects the file monitor and calls
   `this._indicator.destroy()`, which disconnects the menu's
   `open-state-changed` signal, clears the pending flash timeout, and destroys
   the `PanelMenu.Button` (which takes its child widgets and menu items with
@@ -105,7 +156,7 @@ See each file's own imports for the up-to-date list; briefly, by module:
 
 ## Popup menu
 
-Built in `ClaudeWatchIndicator`'s constructor (`lib/indicator.js`), top to
+Built in `ClaudeWatchIndicator`'s constructor (`lib/indicator.ts`), top to
 bottom:
 
 - **Open in VS Code** (`PopupMenuItem`) — sensitive only once `this._state.cwd`
@@ -118,7 +169,7 @@ bottom:
   - **Session** (`_usageLabelItem`) — local token counts for the current
     session (`In … · Out … · Cached …`), no network involved. Reads
     `this._state.transcript_path` async and hands the contents to
-    `summarizeUsage()` (`lib/usage.js`) — a pure function that dedupes by
+    `summarizeUsage()` (`lib/usage.ts`) — a pure function that dedupes by
     `message.id` (the transcript repeats a message once per content block)
     and sums `input_tokens`/`output_tokens`/cache token fields from each
     `assistant` entry's `message.usage`. Refreshes on every state-file change
@@ -133,7 +184,7 @@ bottom:
     not a Messages completion, so it costs no API quota to check (same
     endpoint the popular "Claude Code Usage Tracker" VS Code extension
     uses). There's no local file or documented CLI command that exposes
-    this directly. `formatRateLimitWindow()` (`lib/rateLimit.js`) turns each
+    this directly. `formatRateLimitWindow()` (`lib/rateLimit.ts`) turns each
     window's `utilization`/`resets_at` JSON response fields into its own
     row's text (`5h 27% (resets in 1h 0m)`, `7d 11% (resets Wed 2:00 AM)`). A
     window missing from the response renders as `5h: unavailable` rather
@@ -163,7 +214,7 @@ bottom:
     token, or a failed request all resolve to an inline error string on
     this row instead of a silent failure.
 - **Exit** (`PopupMenuItem`) — removes the extension's uuid (passed into
-  `ClaudeWatchIndicator`'s constructor from `this.uuid` in `extension.js`) from
+  `ClaudeWatchIndicator`'s constructor from `this.uuid` in `extension.ts`) from
   the `org.gnome.shell` `enabled-extensions` gsetting via `Gio.Settings`.
   This is the same mechanism the GNOME Extensions app and
   `gnome-extensions disable` use, so it persists (won't come back next
@@ -184,7 +235,7 @@ ln -s ~/.claude/.credentials.json ~/.config/claudewatch/token
 ```
 
 The token file may contain either credentials.json-format JSON (as with the
-symlink above — `resolveToken()` in `lib/rateLimit.js` extracts
+symlink above — `resolveToken()` in `lib/rateLimit.ts` extracts
 `claudeAiOauth.accessToken` from it) or a raw bearer token. The symlink is
 the form that works: `/api/oauth/usage` requires the `user:profile` scope,
 which only the interactive `claude` login credential carries — a token

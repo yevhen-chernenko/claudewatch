@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    "lib": ["es2022"],
+    "rootDir": "src/extension",
+    "outDir": "dist/extension",
+    "types": [
+      "@girs/gnome-shell/ambient",
+      "@girs/gnome-shell/extensions/global",
+      "@girs/pango-1.0/ambient",
+      "@girs/soup-3.0/ambient",
+      "@girs/gjs/dom"
+    ]
+  },
+  "include": ["src/extension/**/*.ts"]
+}

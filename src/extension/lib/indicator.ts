@@ -10,7 +10,7 @@ import * as Main from "resource:///org/gnome/shell/ui/main.js";
 import * as PanelMenu from "resource:///org/gnome/shell/ui/panelMenu.js";
 import * as PopupMenu from "resource:///org/gnome/shell/ui/popupMenu.js";
 
-import { resolveUiAction } from "./state.js";
+import { resolveUiAction, type SessionState } from "./state.js";
 import { summarizeUsage } from "./usage.js";
 import {
   TOKEN_PATH,
@@ -40,6 +40,31 @@ const COMPLETE_FLASH_MS = 5000;
 const RUNNING_PULSE_MS = 1200;
 const WAITING_PULSE_MS = 600;
 
+type UiState = "standby" | "running" | "waiting" | "complete";
+
+// Two real GNOME Shell APIs the community @girs types don't model: Actor's
+// `ease()` is JS-side sugar from environment.js (not GIR-introspected, so
+// ts-for-gir never sees it), and PopupMenu's `SignalMap` is declared but
+// left empty upstream even though it does emit "open-state-changed". A
+// `declare module` augmentation of the generated `@girs/*` packages would be
+// the usual fix, but doing so corrupts unrelated type resolution for those
+// packages under this toolchain's module setup — so these stay as narrow
+// local assertions instead of a global ambient patch.
+type Easeable = {
+  ease(properties: {
+    opacity?: number;
+    duration?: number;
+    mode?: Clutter.AnimationMode;
+    onComplete?: () => void;
+  }): void;
+};
+type MenuWithOpenStateSignal = {
+  connect(
+    sigName: "open-state-changed",
+    callback: (menu: PopupMenu.PopupMenu, open: boolean) => void,
+  ): number;
+};
+
 // Owns the panel indicator (`this.button`, a plain `PanelMenu.Button` — not
 // subclassed, since GJS's GObject-subclassing ceremony buys nothing here
 // over composition) and its popup menu: the visible state machine (label
@@ -48,10 +73,42 @@ const WAITING_PULSE_MS = 600;
 // only owns file-watching wiring and hands this class parsed state via
 // applyState().
 export class ClaudeWatchIndicator {
-  constructor(uuid, name, extensionPath) {
+  button: InstanceType<typeof PanelMenu.Button>;
+
+  private readonly _uuid: string;
+  private readonly _icon: InstanceType<typeof St.Icon>;
+  private readonly _label: InstanceType<typeof St.Label>;
+  private readonly _box: InstanceType<typeof St.BoxLayout>;
+  // `PanelMenu.Button.menu` is typed as `PopupMenu | PopupDummyMenu` since
+  // the ambient types don't narrow on the dontCreateMenu constructor arg;
+  // it's always a real PopupMenu here since we pass `false` below.
+  private readonly _menu: PopupMenu.PopupMenu;
+
+  private readonly _openInCodeItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
+  private readonly _usageLabelItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
+  private readonly _rateLimit5hItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
+  private readonly _rateLimit7dItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
+  private readonly _autoRefreshItem: InstanceType<typeof PopupMenu.PopupSwitchMenuItem>;
+  private readonly _notificationsItem: InstanceType<typeof PopupMenu.PopupSwitchMenuItem>;
+  private readonly _refreshUsageItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
+  private readonly _exitItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
+  private readonly _menuOpenStateId: number;
+
+  private readonly _httpSession: InstanceType<typeof Soup.Session>;
+  private _lastStatus: string | null = null;
+  private _initialRefreshDone = false;
+  private _autoRefreshOnDone = false;
+  private _notificationsEnabled = false;
+  private _flashTimeoutId: number | null = null;
+  private _pulseDim = false;
+  private _uiState: UiState = "standby";
+  private _state: SessionState = {};
+
+  constructor(uuid: string, name: string, extensionPath: string) {
     this._uuid = uuid;
 
     this.button = new PanelMenu.Button(0.0, name, false);
+    this._menu = this.button.menu as PopupMenu.PopupMenu;
 
     this._icon = new St.Icon({
       gicon: Gio.icon_new_for_string(
@@ -73,65 +130,54 @@ export class ClaudeWatchIndicator {
 
     // Fixed width so the menu doesn't reflow as row text changes length
     // (e.g. "Checking…" vs. a long rate-limit error string).
-    this.button.menu.box.style =
-      "width: 300px; min-width: 300px; max-width: 300px;";
+    this._menu.box.style = "width: 300px; min-width: 300px; max-width: 300px;";
 
     this._openInCodeItem = new PopupMenu.PopupMenuItem("Open in VS Code");
     this._openInCodeItem.setSensitive(false);
     this._openInCodeItem.connect("activate", () => this._openInVsCode());
-    this.button.menu.addMenuItem(this._openInCodeItem);
+    this._menu.addMenuItem(this._openInCodeItem);
 
-    this.button.menu.addMenuItem(
-      new PopupMenu.PopupSeparatorMenuItem("Claude Usage"),
-    );
+    this._menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem("Claude Usage"));
 
     this._usageLabelItem = new PopupMenu.PopupMenuItem("", {
       reactive: false,
       can_focus: false,
     });
-    this.button.menu.addMenuItem(this._usageLabelItem);
+    this._menu.addMenuItem(this._usageLabelItem);
 
     this._httpSession = new Soup.Session();
-    this._lastStatus = null;
-    this._initialRefreshDone = false;
-    this._autoRefreshOnDone = false;
-    this._flashTimeoutId = null;
-    this._pulseDim = false;
-    this._uiState = "standby";
-    this._state = {};
 
     this._rateLimit5hItem = new PopupMenu.PopupMenuItem("", {
       reactive: false,
       can_focus: false,
     });
     this._rateLimit5hItem.visible = false;
-    this.button.menu.addMenuItem(this._rateLimit5hItem);
+    this._menu.addMenuItem(this._rateLimit5hItem);
 
     this._rateLimit7dItem = new PopupMenu.PopupMenuItem("", {
       reactive: false,
       can_focus: false,
     });
     this._rateLimit7dItem.visible = false;
-    this.button.menu.addMenuItem(this._rateLimit7dItem);
+    this._menu.addMenuItem(this._rateLimit7dItem);
 
     this._autoRefreshItem = new PopupMenu.PopupSwitchMenuItem(
       "Auto-refresh on task complete",
       false,
     );
-    this._autoRefreshItem.connect("toggled", (item, state) => {
+    this._autoRefreshItem.connect("toggled", (_item, state: boolean) => {
       this._autoRefreshOnDone = state;
     });
-    this.button.menu.addMenuItem(this._autoRefreshItem);
+    this._menu.addMenuItem(this._autoRefreshItem);
 
-    this._notificationsEnabled = false;
     this._notificationsItem = new PopupMenu.PopupSwitchMenuItem(
       "Notifications",
       false,
     );
-    this._notificationsItem.connect("toggled", (item, state) => {
+    this._notificationsItem.connect("toggled", (_item, state: boolean) => {
       this._notificationsEnabled = state;
     });
-    this.button.menu.addMenuItem(this._notificationsItem);
+    this._menu.addMenuItem(this._notificationsItem);
 
     this._refreshUsageItem = new PopupMenu.PopupMenuItem("Refresh Usage");
     // Default activate() chains to super.activate(), which PopupMenu treats
@@ -147,17 +193,17 @@ export class ClaudeWatchIndicator {
       line_wrap: true,
       line_wrap_mode: Pango.WrapMode.WORD_CHAR,
     });
-    this.button.menu.addMenuItem(this._refreshUsageItem);
+    this._menu.addMenuItem(this._refreshUsageItem);
 
-    this.button.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+    this._menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
     this._exitItem = new PopupMenu.PopupMenuItem("Exit");
     this._exitItem.connect("activate", () => this._onExit());
-    this.button.menu.addMenuItem(this._exitItem);
+    this._menu.addMenuItem(this._exitItem);
 
-    this._menuOpenStateId = this.button.menu.connect(
+    this._menuOpenStateId = (this._menu as unknown as MenuWithOpenStateSignal).connect(
       "open-state-changed",
-      (menu, open) => {
+      (_menu, open) => {
         if (open) this._refreshUsage();
       },
     );
@@ -172,9 +218,9 @@ export class ClaudeWatchIndicator {
   // back to "Standby" on its own even though the state file still says
   // status: "done". See resolveUiAction() for the transition rules
   // themselves.
-  applyState(state) {
+  applyState(state: SessionState): void {
     this._state = state;
-    this._openInCodeItem?.setSensitive(!!this._state.cwd);
+    this._openInCodeItem.setSensitive(!!this._state.cwd);
     this._refreshUsage();
     const action = resolveUiAction(
       this._state.status,
@@ -187,7 +233,7 @@ export class ClaudeWatchIndicator {
     else if (action === "complete") this._enterComplete();
     else if (action === "standby") this._enterStandby();
     const justCompleted = action === "complete";
-    this._lastStatus = this._state.status;
+    this._lastStatus = this._state.status ?? null;
     // Gated on the Auto-refresh toggle (default off) so a manual "Refresh
     // Usage" click is the only rate-limit request by default — see
     // docs/SECURITY.md "Opt-in network egress".
@@ -198,29 +244,26 @@ export class ClaudeWatchIndicator {
 
   // Idle state: no pulse, no flash, plain padded label. Also where the
   // 5s post-completion flash lands once it times out.
-  _enterStandby() {
+  private _enterStandby(): void {
     this._uiState = "standby";
-    this._label?.remove_all_transitions();
+    this._label.remove_all_transitions();
     if (this._flashTimeoutId) {
       GLib.source_remove(this._flashTimeoutId);
       this._flashTimeoutId = null;
     }
-    if (this._label) {
-      this._label.opacity = 255;
-      this._label.style = STANDBY_STYLE;
-      this._label.set_text(STANDBY_TEXT);
-    }
+    this._label.opacity = 255;
+    this._label.style = STANDBY_STYLE;
+    this._label.set_text(STANDBY_TEXT);
   }
 
   // Task-in-flight state: slowly pulses the label orange by easing its
   // opacity back and forth (the background color itself stays fixed).
-  _enterRunning() {
+  private _enterRunning(): void {
     this._uiState = "running";
     if (this._flashTimeoutId) {
       GLib.source_remove(this._flashTimeoutId);
       this._flashTimeoutId = null;
     }
-    if (!this._label) return;
     this._label.style = RUNNING_STYLE;
     this._label.set_text(RUNNING_TEXT);
     this._label.opacity = 255;
@@ -233,13 +276,12 @@ export class ClaudeWatchIndicator {
   // blue and twice as fast, so it reads as more urgent than plain progress.
   // Also fires a desktop notification since the panel alone is easy to miss
   // while Claude is genuinely blocked on the user.
-  _enterWaiting() {
+  private _enterWaiting(): void {
     this._uiState = "waiting";
     if (this._flashTimeoutId) {
       GLib.source_remove(this._flashTimeoutId);
       this._flashTimeoutId = null;
     }
-    if (!this._label) return;
     this._label.style = WAITING_STYLE;
     this._label.set_text(WAITING_TEXT);
     this._label.opacity = 255;
@@ -254,20 +296,19 @@ export class ClaudeWatchIndicator {
   // spawning a subprocess, and resolves soundName against the user's
   // current sound theme rather than shipping an audio file. No-op unless
   // the "Notifications" toggle is on (default off).
-  _notify(text, soundName) {
+  private _notify(text: string, soundName: string): void {
     if (!this._notificationsEnabled) return;
     Main.notify("ClaudeWatch", text);
     global.display.get_sound_player().play_from_theme(soundName, text, null);
   }
 
-  _pulseLoop() {
-    if (!this._label) return;
-    let pulseDuration = null;
+  private _pulseLoop(): void {
+    let pulseDuration: number | null = null;
     if (this._uiState === "running") pulseDuration = RUNNING_PULSE_MS;
     else if (this._uiState === "waiting") pulseDuration = WAITING_PULSE_MS;
     if (!pulseDuration) return;
     this._pulseDim = !this._pulseDim;
-    this._label.ease({
+    (this._label as unknown as Easeable).ease({
       opacity: this._pulseDim ? 120 : 255,
       duration: pulseDuration,
       mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
@@ -278,14 +319,13 @@ export class ClaudeWatchIndicator {
   // Just-finished state: flashes the label green for COMPLETE_FLASH_MS,
   // then falls back to standby on its own. Also fires a desktop notification
   // for the same reason as _enterWaiting() — easy to miss the panel alone.
-  _enterComplete() {
+  private _enterComplete(): void {
     this._uiState = "complete";
-    this._label?.remove_all_transitions();
+    this._label.remove_all_transitions();
     if (this._flashTimeoutId) {
       GLib.source_remove(this._flashTimeoutId);
       this._flashTimeoutId = null;
     }
-    if (!this._label) return;
     this._label.opacity = 255;
     this._label.style = COMPLETE_STYLE;
     this._label.set_text(COMPLETE_TEXT);
@@ -301,12 +341,12 @@ export class ClaudeWatchIndicator {
     );
   }
 
-  _openInVsCode() {
+  private _openInVsCode(): void {
     const cwd = this._state.cwd;
     if (!cwd) return;
     try {
       Gio.Subprocess.new(["code", cwd], Gio.SubprocessFlags.NONE);
-    } catch (e) {
+    } catch {
       Main.notify(
         "ClaudeWatch",
         "Couldn't launch VS Code — is `code` on your PATH?",
@@ -314,7 +354,7 @@ export class ClaudeWatchIndicator {
     }
   }
 
-  _refreshUsage() {
+  private _refreshUsage(): void {
     const transcriptPath = this._state.transcript_path;
     if (!transcriptPath) {
       this._usageLabelItem.label.set_text("No active session yet");
@@ -324,57 +364,56 @@ export class ClaudeWatchIndicator {
     Gio.File.new_for_path(transcriptPath).load_contents_async(
       null,
       (file, result) => {
-        let text;
+        let text: string;
         try {
-          const [, contents] = file.load_contents_finish(result);
+          const [, contents] = file!.load_contents_finish(result);
           text = `${summarizeUsage(new TextDecoder().decode(contents))}`;
-        } catch (e) {
+        } catch {
           // Transcript may be mid-write, same as the state file.
           text = "Session — usage unavailable";
         }
-        this._usageLabelItem?.label.set_text(text);
+        this._usageLabelItem.label.set_text(text);
       },
     );
   }
 
-  _onRefreshUsageClicked() {
+  private _onRefreshUsageClicked(): void {
     this._refreshUsage();
     this._refreshRateLimits();
   }
 
-  _refreshRateLimits() {
+  private _refreshRateLimits(): void {
     this._refreshUsageItem.label.set_text("Checking…");
     this._rateLimit5hItem.visible = false;
     this._rateLimit7dItem.visible = false;
-    Gio.File.new_for_path(TOKEN_PATH).load_contents_async(
-      null,
-      (file, result) => {
-        let text;
-        try {
-          const [, contents] = file.load_contents_finish(result);
-          text = new TextDecoder().decode(contents).trim();
-        } catch (e) {
-          this._refreshUsageItem?.label.set_text(
-            `No token file at ${TOKEN_PATH}`,
-          );
-          return;
-        }
-        if (!text) {
-          this._refreshUsageItem?.label.set_text("Token file is empty");
-          return;
-        }
-        const { token, error } = resolveToken(text);
-        if (error) {
-          this._refreshUsageItem?.label.set_text(error);
-          return;
-        }
-        this._probeRateLimits(token);
-      },
-    );
+    Gio.File.new_for_path(TOKEN_PATH).load_contents_async(null, (file, result) => {
+      let text: string;
+      try {
+        const [, contents] = file!.load_contents_finish(result);
+        text = new TextDecoder().decode(contents).trim();
+      } catch {
+        this._refreshUsageItem.label.set_text(`No token file at ${TOKEN_PATH}`);
+        return;
+      }
+      if (!text) {
+        this._refreshUsageItem.label.set_text("Token file is empty");
+        return;
+      }
+      const { token, error } = resolveToken(text);
+      if (error || !token) {
+        this._refreshUsageItem.label.set_text(error ?? "No token found");
+        return;
+      }
+      this._probeRateLimits(token);
+    });
   }
 
-  _probeRateLimits(token) {
+  private _probeRateLimits(token: string): void {
     const message = Soup.Message.new("GET", RATE_LIMIT_URL);
+    if (!message) {
+      this._refreshUsageItem.label.set_text("Rate limit check failed — bad URL");
+      return;
+    }
     message.request_headers.append("authorization", `Bearer ${token}`);
     message.request_headers.append("anthropic-beta", "oauth-2025-04-20");
 
@@ -385,10 +424,10 @@ export class ClaudeWatchIndicator {
       (session, result) => {
         let bytes;
         try {
-          bytes = session.send_and_read_finish(result);
+          bytes = session!.send_and_read_finish(result);
         } catch (e) {
-          this._refreshUsageItem?.label.set_text(
-            `Rate limit check failed — ${e.message}`,
+          this._refreshUsageItem.label.set_text(
+            `Rate limit check failed — ${e instanceof Error ? e.message : String(e)}`,
           );
           return;
         }
@@ -398,39 +437,40 @@ export class ClaudeWatchIndicator {
         // and leave the row stuck on "Checking…" — status_code is the same
         // guint without the enum marshaling.
         const statusCode = message.status_code;
-        let data;
+        let data: {
+          error?: { message?: string };
+          five_hour?: import("./rateLimit.js").RateLimitWindow;
+          seven_day?: import("./rateLimit.js").RateLimitWindow;
+        } | null;
         try {
-          data = JSON.parse(new TextDecoder().decode(bytes.get_data()));
-        } catch (e) {
+          const raw = bytes?.get_data();
+          data = raw ? JSON.parse(new TextDecoder().decode(raw)) : null;
+        } catch {
           data = null;
         }
         if (statusCode < 200 || statusCode >= 300) {
           const detail = data?.error?.message ?? `HTTP ${statusCode}`;
-          this._refreshUsageItem?.label.set_text(
-            `Rate limit check failed — ${detail}`,
-          );
+          this._refreshUsageItem.label.set_text(`Rate limit check failed — ${detail}`);
           return;
         }
         if (!data) {
-          this._refreshUsageItem?.label.set_text(
-            "Rate limit check failed — bad response",
-          );
+          this._refreshUsageItem.label.set_text("Rate limit check failed — bad response");
           return;
         }
-        this._refreshUsageItem?.label.set_text("Refresh Usage");
-        this._rateLimit5hItem?.label.set_text(
+        this._refreshUsageItem.label.set_text("Refresh Usage");
+        this._rateLimit5hItem.label.set_text(
           formatRateLimitWindow(data.five_hour, "5h"),
         );
-        this._rateLimit7dItem?.label.set_text(
+        this._rateLimit7dItem.label.set_text(
           formatRateLimitWindow(data.seven_day, "7d"),
         );
-        if (this._rateLimit5hItem) this._rateLimit5hItem.visible = true;
-        if (this._rateLimit7dItem) this._rateLimit7dItem.visible = true;
+        this._rateLimit5hItem.visible = true;
+        this._rateLimit7dItem.visible = true;
       },
     );
   }
 
-  _onExit() {
+  private _onExit(): void {
     const settings = new Gio.Settings({ schema_id: "org.gnome.shell" });
     const enabled = settings.get_strv("enabled-extensions");
     const index = enabled.indexOf(this._uuid);
@@ -444,15 +484,17 @@ export class ClaudeWatchIndicator {
   // that actually leak across enable/disable cycles if left connected —
   // destroying `button` (a widget) takes its child actors and menu items
   // with it.
-  destroy() {
+  destroy(): void {
     if (this._flashTimeoutId) {
       GLib.source_remove(this._flashTimeoutId);
       this._flashTimeoutId = null;
     }
-    this._label?.remove_all_transitions();
-    this.button.menu.disconnect(this._menuOpenStateId);
-    this._httpSession = null;
+    this._label.remove_all_transitions();
+    this._menu.disconnect(this._menuOpenStateId);
+    // Nothing reads `button`/`_httpSession` after this call (extension.js
+    // drops its own reference to this indicator in the same disable() that
+    // calls destroy()), so there's no need to null them out here the way
+    // the pre-TS version did.
     this.button.destroy();
-    this.button = null;
   }
 }

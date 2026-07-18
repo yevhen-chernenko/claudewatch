@@ -3,13 +3,15 @@
 Status: interim, for the single-state-file implementation (see
 [ARCHITECTURE.md](ARCHITECTURE.md) for the per-session design this will move
 to). No automated tests yet — this is what to run by hand after touching
-`extension/extension.js`, anything under `extension/lib/`, or
-`hooks/hook-handler.js`. See [EXTENSION.md](EXTENSION.md#file-layout) for
-what lives in each file.
+`src/extension/extension.ts`, anything under `src/extension/lib/`, or
+`src/hooks/hook-handler.ts`. See [EXTENSION.md](EXTENSION.md#file-layout) for
+what lives in each file, and [EXTENSION.md#building](EXTENSION.md#building)
+for the `npm run build` step these commands assume you've already run.
 
 ## Reload the extension
 
-The shell only picks up `extension.js` changes on reload, not live:
+The shell only picks up `dist/extension/extension.js` changes on reload, not
+live, and only after a `npm run build`:
 
 - X11: Alt+F2, type `r`, Enter.
 - Wayland: log out and back in (no in-session reload).
@@ -18,27 +20,28 @@ The shell only picks up `extension.js` changes on reload, not live:
 
 Simulates the wired events without needing a real Claude Code turn. Watch
 the panel label after each command — it updates within ~1s via the
-`Gio.FileMonitor` in `extension.js`, no reload needed.
+`Gio.FileMonitor` in `extension.ts`, no reload needed. Run `npm run build`
+first so `dist/hooks/hook-handler.js` is current.
 
 ```sh
-echo '{"hook_event_name":"UserPromptSubmit"}' | node hooks/hook-handler.js
+echo '{"hook_event_name":"UserPromptSubmit"}' | node dist/hooks/hook-handler.js
 # panel -> "Claude is working..." (orange, pulsing)
 
-echo '{"hook_event_name":"Notification"}' | node hooks/hook-handler.js
+echo '{"hook_event_name":"Notification"}' | node dist/hooks/hook-handler.js
 # panel -> "Claude wants something!" (blue, pulsing twice as fast)
 # also fires a desktop notification (Main.notify) plus a "dialog-question"
 # themed system sound
 
-echo '{"hook_event_name":"PermissionRequest"}' | node hooks/hook-handler.js
+echo '{"hook_event_name":"PermissionRequest"}' | node dist/hooks/hook-handler.js
 # same "waiting" transition as Notification above — PermissionRequest and
-# Notification both map to status: waiting_approval in hook-handler.js
+# Notification both map to status: waiting_approval in hook-handler.ts
 
-echo '{"hook_event_name":"PreToolUse"}' | node hooks/hook-handler.js
+echo '{"hook_event_name":"PreToolUse"}' | node dist/hooks/hook-handler.js
 # panel -> "Claude is working..." (orange, pulsing) again — confirms the
 # waiting -> running edge fires once a permission prompt is answered and
 # tool execution resumes, instead of staying blue until Stop
 
-echo '{"hook_event_name":"Stop"}' | node hooks/hook-handler.js
+echo '{"hook_event_name":"Stop"}' | node dist/hooks/hook-handler.js
 # panel -> "Claude is done!" (green flash, then standby after 5s)
 # also fires a desktop notification plus a "complete" themed system sound
 ```

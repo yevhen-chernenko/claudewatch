@@ -102,7 +102,7 @@ changelog, so keep it in sync as items ship rather than trusting it blindly.
 - [x] Desktop notifications: permission-needed and run-finished, wired to
   the `Notification`/`PermissionRequest` and `Stop` hooks respectively, each
   paired with a themed system sound (`Main.notify` + `play_from_theme`, see
-  `_notify()` in `extension/lib/indicator.js`). **Not yet toggleable** —
+  `_notify()` in `src/extension/lib/indicator.ts`). **Not yet toggleable** —
   there is no prefs window yet at all, see the mute-toggle and preferences
   items below.
 - [ ] Mute-notifications toggle (muted by default) gating the desktop
@@ -124,24 +124,25 @@ changelog, so keep it in sync as items ship rather than trusting it blindly.
 - [ ] Stale-session GC running on a periodic timeout, verified not to leak or
   grow unbounded. Not applicable yet to the single global state file; lands
   with the per-session rework.
-- [ ] TypeScript for type checking: JSDoc-annotated `.js`, checked via
-  `tsc --checkJs --allowJs --noEmit` against type stubs for the `gi://`
-  and shell-resource modules — not a compile-to-`.js` build step. The
-  extension package still ships plain ESM JS with no bundler, consistent
-  with EGO's "external scripts/binaries strongly discouraged" stance and
-  this repo's existing no-build-step layout (see
-  [EXTENSION.md](EXTENSION.md#file-layout)). Also directly targets EGO's
-  "imaginary API usage" rejection criterion (SECURITY.md) by catching
-  calls to APIs that don't actually exist at check time instead of only at
-  review time.
+- [x] TypeScript: real `.ts` sources under `src/`, compiled by `tsc` to
+  `dist/` (see [EXTENSION.md](EXTENSION.md#file-layout)), superseding the
+  JSDoc+`checkJs` approach originally sketched here. The compile step is
+  dev-time only — the packaged extension still ships plain ESM JS with no
+  bundler and nothing for an end user (or EGO's review) to build; `dist/`
+  is gitignored and regenerated via `npm run build`. `strict` mode is on
+  across both the extension and `hooks/hook-handler.js`. Also directly
+  targets EGO's "imaginary API usage" rejection criterion (SECURITY.md) by
+  catching calls to APIs that don't actually exist at check time instead of
+  only at review time.
 - [ ] Vitest, scoped to what's actually pure and host-independent:
-  `extension/lib/state.js`'s `resolveUiAction()`, `extension/lib/usage.js`,
-  the formatting half of `extension/lib/rateLimit.js`, and
-  `hooks/hook-handler.js`'s event-to-status mapping. Everything that
-  touches `gi://`/`Main`/`Soup` stays out of unit-test scope per this
-  project's testing philosophy (behavior-driven, mock only at real system
-  boundaries, extract pure helpers rather than mock shell internals) —
-  that's what [TESTING.md](TESTING.md)'s manual pass is for. The Phase 2
+  `src/extension/lib/state.ts`'s `resolveUiAction()`,
+  `src/extension/lib/usage.ts`, the formatting half of
+  `src/extension/lib/rateLimit.ts`, and `src/hooks/hook-handler.ts`'s
+  event-to-status mapping. Everything that touches `gi://`/`Main`/`Soup`
+  stays out of unit-test scope per this project's testing philosophy
+  (behavior-driven, mock only at real system boundaries, extract pure
+  helpers rather than mock shell internals) — that's what
+  [TESTING.md](TESTING.md)'s manual pass is for. The Phase 2
   `extension/lib/` split already isolated exactly the functions this would
   cover.
 - **Exit criteria**: you use it as your actual daily driver for a week

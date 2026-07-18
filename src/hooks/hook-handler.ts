@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-"use strict";
-
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 
 const stateDir = path.join(
   process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"),
@@ -13,7 +11,9 @@ const stateDir = path.join(
 );
 const statePath = path.join(stateDir, "state.json");
 
-const STATUS_BY_EVENT = {
+type SessionStatus = "running" | "waiting_approval" | "done";
+
+const STATUS_BY_EVENT: Record<string, SessionStatus> = {
   UserPromptSubmit: "running",
   PreToolUse: "running",
   PostToolUse: "running",
@@ -22,8 +22,14 @@ const STATUS_BY_EVENT = {
   Stop: "done",
 };
 
-const input = JSON.parse(fs.readFileSync(0, "utf-8"));
-const status = STATUS_BY_EVENT[input.hook_event_name];
+interface HookInput {
+  hook_event_name?: string;
+  cwd?: string;
+  transcript_path?: string;
+}
+
+const input = JSON.parse(fs.readFileSync(0, "utf-8")) as HookInput;
+const status = input.hook_event_name ? STATUS_BY_EVENT[input.hook_event_name] : undefined;
 
 if (status) {
   fs.mkdirSync(stateDir, { recursive: true });

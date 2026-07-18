@@ -165,16 +165,16 @@ Mitigations, concrete and ongoing (not a one-time pass before submission):
 ## Hardening checklist (track status as phases land)
 
 - [ ] State directory created with `0700`, files with `0600` — not yet:
-      `hook-handler.js`'s `mkdirSync`/`writeFileSync` don't pass a `mode`,
+      `hook-handler.ts`'s `mkdirSync`/`writeFileSync` don't pass a `mode`,
       so both fall back to the process umask (typically `0755`/`0644`).
 - [x] Atomic writes only (`tmp` + `rename`) for every state file — verified
-      in `hooks/hook-handler.js` (`writeFileSync(tmpPath)` +
+      in `src/hooks/hook-handler.ts` (`writeFileSync(tmpPath)` +
       `renameSync(tmpPath, statePath)`).
 - [x] Extension tolerates a missing/malformed/partially-written state file
-      without crashing the shell — `extension.js`'s `_refresh()` catches
+      without crashing the shell — `extension.ts`'s `_refresh()` catches
       the parse/read failure and falls back to `{}`.
 - [x] No sync file I/O on the shell main loop — `Gio.File` async APIs
-      only. Verified: no `_sync(` calls anywhere under `extension/`.
+      only. Verified: no `_sync(` calls anywhere under `src/extension/`.
 - [x] `enable()`/`disable()` audited for full symmetry (signals, sources,
       widgets, caches) — re-audited during the Phase 2 `extension/lib/`
       split: `enable()`'s file monitor is disconnected in `disable()`, and
@@ -193,11 +193,11 @@ Mitigations, concrete and ongoing (not a one-time pass before submission):
 - [x] No network calls except the opt-in, user-triggered "Claude Usage"
       rate-limit check (see "Opt-in network egress" above) — everything
       else in the extension and hook handler stays local-only. `Soup` is
-      only imported in `extension/lib/indicator.js`, and only used inside
+      only imported in `src/extension/lib/indicator.ts`, and only used inside
       `_probeRateLimits()`.
 - [x] No telemetry/analytics
 - [x] Hook handler has zero npm dependencies (reduces supply-chain surface
-      to just Node's builtins) — `hooks/hook-handler.js` only requires
+      to just Node's builtins) — `src/hooks/hook-handler.ts` only requires
       `fs`, `os`, `path`.
 - [ ] GC policy for stale session files verified (no unbounded growth in
       `~/.local/state/claudewatch/`) — not applicable yet: there's a single
@@ -205,8 +205,8 @@ Mitigations, concrete and ongoing (not a one-time pass before submission):
       today, but there's also no GC logic to verify. Lands with the
       per-session rework.
 - [x] SPDX GPL-2.0-or-later header on every source file — verified across
-      `extension/extension.js`, every file under `extension/lib/`, and
-      `hooks/hook-handler.js`.
+      `src/extension/extension.ts`, every file under `src/extension/lib/`, and
+      `src/hooks/hook-handler.ts`.
 - [ ] Self-review pass against the AI-generated-code rejection criteria
       above, done as its own pass before submission
 - [ ] `gnome-extensions-tool` / EGO's own linting (if available) run clean

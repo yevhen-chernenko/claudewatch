@@ -14,13 +14,19 @@ are versioned, installed, and reviewed separately.
 
 1. **Hook handler** — a small script invoked by Claude Code itself, once per
    configured hook event. Not part of the GNOME extension package; not
-   reviewed by extensions.gnome.org. Lives in its own repo location (e.g.
-   `hooks/`) and is installed by the user (or by a setup action in the
-   extension's preferences — see [Install flow](#install-flow)) as a command
-   entry in `~/.claude/settings.json`.
+   reviewed by extensions.gnome.org. Source lives at `src/hooks/hook-handler.ts`
+   and is compiled (`npm run build`, see [EXTENSION.md](EXTENSION.md#building))
+   to `dist/hooks/hook-handler.js`, which is what a user (or a setup action in
+   the extension's preferences — see [Install flow](#install-flow)) installs
+   as a command entry in `~/.claude/settings.json`. TypeScript is a devtime
+   dependency only — the installed script has zero runtime dependencies,
+   same as before.
 2. **GNOME Shell extension** — GJS, ESM module format (GNOME 45+), the only
    piece submitted to extensions.gnome.org. Reads local state, renders the
-   panel indicator and popup menu, owns preferences.
+   panel indicator and popup menu, owns preferences. Also written in
+   TypeScript (`src/extension/`) and compiled to plain JS (`dist/extension/`)
+   before install/packaging — nothing for GNOME Shell or EGO's review to
+   build.
 
 There is no long-running daemon in v1. The hook handler runs, does one small
 write, and exits — every invocation. This is a deliberate simplification:

@@ -8,6 +8,18 @@ export const STATE_PATH = GLib.build_filenamev([
   "state.json",
 ]);
 
+// Parsed contents of state.json, as written by hooks/hook-handler.js. All
+// fields are optional: extension.js falls back to `{}` when the file is
+// missing or mid-write (see its _refresh()).
+export interface SessionState {
+  status?: string;
+  updated_at?: string;
+  cwd?: string;
+  transcript_path?: string;
+}
+
+export type UiAction = "running" | "waiting" | "complete" | "standby" | null;
+
 // Pure edge-detection: decides which _enter* transition (if any) a refresh
 // should perform, given the freshly-read status, the previously-seen status,
 // and whether this is the very first refresh after enable(). Kept separate
@@ -19,7 +31,11 @@ export const STATE_PATH = GLib.build_filenamev([
 // "done", its natural resting state), and treating that as a fresh
 // transition would replay the complete flash or waiting pulse on startup
 // instead of just syncing straight to the current state.
-export function resolveUiAction(status, previousStatus, isInitialRefresh) {
+export function resolveUiAction(
+  status: string | undefined,
+  previousStatus: string | null | undefined,
+  isInitialRefresh: boolean,
+): UiAction {
   if (isInitialRefresh) {
     if (status === "running") return "running";
     if (status === "waiting_approval") return "waiting";
