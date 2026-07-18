@@ -39,8 +39,8 @@ remote endpoint.
 
 ### Opt-in network egress: the rate-limit check
 
-"Claude Usage" (`extension.js`, `_refreshRateLimits`/`_probeRateLimits`) is
-the one feature that leaves the machine. It exists only because Anthropic
+"Claude Usage" (`lib/indicator.ts`, `_refreshRateLimits`/`_probeRateLimits`)
+is the one feature that leaves the machine. It exists only because Anthropic
 doesn't expose 5-hour/7-day rate-limit utilization through any local file or
 documented CLI command — the only way to read it is a real network call.
 It's a `GET` to the dedicated `/api/oauth/usage` status endpoint (the same
@@ -66,8 +66,9 @@ usage costs no API quota. Design constraints that keep this contained:
   "Auto-refresh on task complete" switch (`_autoRefreshItem`, unchecked on
   every `enable()`) lets the user opt into an automatic check as well; when
   on, it fires once per Stop hook event (edge-triggered on the state file's
-  `status` transitioning to `"done"` — see `_refresh()` in `extension.js`).
-  There is no interval timer and no menu-open auto-refresh either way
+  `status` transitioning to `"done"` — see `applyState()` in
+  `lib/indicator.ts`). There is no interval timer and no menu-open
+  auto-refresh either way
   (unlike the free local session-token summary next to it, which does
   refresh on menu open). The toggle state lives only in memory
   (`this._autoRefreshOnDone`), not in a GSettings key, so it resets to off

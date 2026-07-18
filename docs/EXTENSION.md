@@ -14,21 +14,40 @@ activity, read from a JSON state file written by the compiled
 ${XDG_STATE_HOME:-~/.local/state}/claudewatch/state.json
 ```
 
-Five states: idle (**standby**, plain label — also where it lands 5s after a
-task finishes), a task in flight (**running**, pulsing orange), paused on a
-permission prompt or question (**waiting**, pulsing blue at twice the running
-rate so it reads as more urgent), a manual `/compact` in progress
-(**compacting**, pulsing purple at the same rate as running), and the 5s
-flash right after a task finishes (**complete**, green). Entering **waiting**
-or **complete** also fires a desktop notification (`Main.notify`) paired with
-a themed system sound (`dialog-question` / `complete`) — see `_notify()` in
-[lib/indicator.ts](../src/extension/lib/indicator.ts) — since the panel alone
-is easy to miss. **compacting** doesn't notify: it's Claude pausing to
-summarize its own transcript, not asking the user for anything, and an
-auto-triggered compaction (context window filling up mid-task) is treated as
-an implementation detail of the running task rather than its own state — see
+Five states: idle (**standby**, plain dark label reading "All clear 👀" —
+also where it lands 5s after a task finishes), a task in flight (**running**,
+pulsing orange, "Agent &lt;name&gt; is working 🕶️"), paused on a permission
+prompt or question (**waiting**, static blue — no pulse, since the color and
+text alone read clearly enough, "Agent &lt;name&gt; needs support 📞"), a
+manual `/compact` in progress (**compacting**, pulsing purple at the same
+rate as running, "Agents are training 🔫" — no agent name, since it isn't
+retained into the next session), and the 5s flash right after a task
+finishes (**complete**, static green, "Agent &lt;name&gt; is done 🎖️"). The
+agent name is picked once per run (on the standby → running transition, from
+a fixed list in `lib/indicator.ts`) and reused across running/waiting/
+complete until the run falls back to standby, so it doesn't re-roll on every
+state-file update. Entering **waiting** or **complete** fires a desktop
+notification (`Main.notify`) paired with a themed system sound
+(`dialog-question` / `complete`) — see `_notify()` in
+[lib/indicator.ts](../src/extension/lib/indicator.ts) — but only if the
+popup menu's **Notifications** toggle is on (off by default on every
+`enable()`; see [Popup menu](#popup-menu) below) — the panel color/text
+change always happens regardless of the toggle. **compacting** never
+notifies even with the toggle on: it's Claude pausing to summarize its own
+transcript, not asking the user for anything, and an auto-triggered
+compaction (context window filling up mid-task) is treated as an
+implementation detail of the running task rather than its own state — see
 the `PreCompact`/`trigger` handling in
 [hooks/hook-handler.ts](../src/hooks/hook-handler.ts).
+
+A `running`/`waiting_approval`/`compacting` status is only trusted while the
+session that wrote it is still alive: the hook handler records its own
+process's ppid (the Claude Code CLI process, since hooks run in exec form)
+as `pid` in state.json, and `_isSessionAlive()` in `lib/indicator.ts` checks
+`/proc/<pid>` before applying one of those three statuses — a killed
+terminal or crashed session that never fired `Stop` falls back to standby
+instead of leaving the panel stuck. State files with no `pid` (older format)
+skip the check and trust the status as-is.
 
 Claude Code fires no hook at all when a manual `/compact` is cancelled
 mid-flight (only a *completed* compaction ever produces another state.json
@@ -79,9 +98,11 @@ dist/                 # build output (gitignored)
 - `extension.ts` — the `Extension` subclass: `enable()`/`disable()` and
   file-monitor wiring only. No widget or state-machine logic lives here —
   see `lib/indicator.ts`.
-- `lib/state.ts` — `STATE_PATH`, the `SessionState` shape of state.json, and
-  `resolveUiAction()`, the pure edge-detection function that decides which UI
-  transition (if any) a given status change triggers.
+- `lib/state.ts` — `STATE_PATH`, the `SessionState` shape of state.json,
+  `deriveEffectiveStatus()` (the pid-liveness check that discounts a leftover
+  `running`/`waiting_approval`/`compacting` status from a session that's no
+  longer alive), and `resolveUiAction()`, the pure edge-detection function
+  that decides which UI transition (if any) a given status change triggers.
 - `lib/usage.ts` — `formatTokenCount()` and `summarizeUsage()`, pure
   transcript token-counting math with no `gi://` imports.
 - `lib/rateLimit.ts` — `TOKEN_PATH`, `RATE_LIMIT_URL`, and the pure
@@ -227,6 +248,15 @@ bottom:
     this switch) rather than unconditional, and
     ["Setting up the Claude Usage token"](#setting-up-the-claude-usage-token)
     below for how to actually get it working.
+  - **Notifications** (`_notificationsItem`, `PopupSwitchMenuItem`) — off by
+    default on every `enable()`, same toggle-without-closing-the-menu
+    pattern as Auto-refresh above. Gates every `_notify()` call in
+    `lib/indicator.ts` (the desktop notification + themed sound fired on
+    entering **waiting** or **complete**) — the panel label's color and text
+    always update regardless of this toggle; only the notification/sound
+    pair is suppressed while it's off. In-memory only
+    (`this._notificationsEnabled`), so it resets to off on every shell
+    reload, same rationale as Auto-refresh.
   - **Refresh Usage** (`_refreshUsageItem`, `PopupMenuItem`) — manual
     override on top of the automatic refreshes above; `activate` calls both
     `_refreshUsage()` and `_refreshRateLimits()`. Also doubles as the status

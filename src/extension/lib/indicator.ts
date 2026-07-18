@@ -66,8 +66,8 @@ const COMPLETE_STYLE =
 const COMPACTING_STYLE =
   "padding: 0 6px; background-color: #7a3fa0; border-radius: 4px; color: #ffffff;"; // 6.89:1
 const COMPLETE_FLASH_MS = 5000;
-// Full pulse cycle (dim -> bright -> dim) is 2x this, matching the
-// pulseGlow keyframes' 2.6s cycle; opacity floor is 72% of 255.
+// Full pulse cycle (dim -> bright -> dim) is 2x this, i.e. 2.6s; opacity
+// floor is 72% of 255.
 const PULSE_HALF_CYCLE_MS = 1300;
 const PULSE_DIM_OPACITY = Math.round(255 * 0.72);
 // Claude Code only writes a hook-triggered state.json update for a
@@ -279,7 +279,7 @@ export class ClaudeWatchIndicator {
   // while status stays the same. Text and style are both driven from
   // this._uiState (set by the _enter* methods below), not directly from the
   // raw hook status — that's what lets the 5s post-completion timer fall
-  // back to "Standby" on its own even though the state file still says
+  // back to standby on its own even though the state file still says
   // status: "done". See resolveUiAction() for the transition rules
   // themselves.
   applyState(state: SessionState): void {
@@ -733,11 +733,10 @@ export class ClaudeWatchIndicator {
     settings.set_strv("enabled-extensions", enabled);
   }
 
-  // Mirrors the old disable()'s teardown exactly, scoped to what this class
-  // owns: the GLib timeout and the menu signal connection are the two things
-  // that actually leak across enable/disable cycles if left connected —
-  // destroying `button` (a widget) takes its child actors and menu items
-  // with it.
+  // Scoped to what this class owns: the GLib timeout and the menu signal
+  // connection are the two things that actually leak across enable/disable
+  // cycles if left connected — destroying `button` (a widget) takes its
+  // child actors and menu items with it.
   destroy(): void {
     if (this._flashTimeoutId) {
       GLib.source_remove(this._flashTimeoutId);
@@ -747,10 +746,9 @@ export class ClaudeWatchIndicator {
     this._stopWatchingTranscript();
     this._label.remove_all_transitions();
     this._menu.disconnect(this._menuOpenStateId);
-    // Nothing reads `button`/`_httpSession` after this call (extension.js
+    // Nothing reads `button`/`_httpSession` after this call — extension.js
     // drops its own reference to this indicator in the same disable() that
-    // calls destroy()), so there's no need to null them out here the way
-    // the pre-TS version did.
+    // calls destroy() — so there's no need to null them out here.
     this.button.destroy();
   }
 }

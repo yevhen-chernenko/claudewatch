@@ -45,13 +45,16 @@ Goal: the feature set described in the brief, working locally, and ready to
 ship on the GNOME Extensions library (EGO).
 
 What's landed so far — core state machine (standby / running /
-waiting_approval / done), desktop notifications wired to the
-`Notification`/`PermissionRequest` and `Stop` hooks, and the popup menu's
-"Open in VS Code", session token summary, opt-in usage/rate-limit check, and
-"Exit" — is documented in [EXTENSION.md](EXTENSION.md). What's still ahead
-(per-session breakdown, notification toggle, compacting status, preferences
-window, stale-session GC, tests, and the EGO submission checklist) is tracked
-in [BACKLOG.md](BACKLOG.md) rather than duplicated here.
+waiting_approval / compacting / done) with per-run agent-name flavor text,
+an opt-in "Notifications" toggle gating the desktop notifications wired to
+the `Notification`/`PermissionRequest`, `PreCompact` (manual trigger only),
+and `Stop` hooks, a pid-liveness check so a killed/crashed session's leftover
+status doesn't stick, and the popup menu's "Open in VS Code", session token
+summary, opt-in usage/rate-limit check, and "Exit" — is documented in
+[EXTENSION.md](EXTENSION.md). What's still ahead (per-session breakdown,
+preferences window, stale-session GC, tests, and the EGO submission
+checklist) is tracked in [BACKLOG.md](BACKLOG.md) rather than duplicated
+here.
 
 - **Exit criteria**: used as an actual daily driver for a week across at
   least two concurrent sessions (e.g. VS Code + terminal) without needing to

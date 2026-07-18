@@ -23,36 +23,45 @@ the panel label after each command — it updates within ~1s via the
 `Gio.FileMonitor` in `extension.ts`, no reload needed. Run `npm run build`
 first so `dist/hooks/hook-handler.js` is current.
 
+Notifications (`Main.notify` + themed sound) only fire while the popup
+menu's **Notifications** toggle is on — off by default on every `enable()`.
+Turn it on first (open the menu, flip the switch) if you want to exercise
+that part of the script below; the panel color/text transitions themselves
+happen either way.
+
 ```sh
 echo '{"hook_event_name":"UserPromptSubmit"}' | node dist/hooks/hook-handler.js
-# panel -> "Claude is working..." (orange, pulsing)
+# panel -> "Agent <name> is working 🕶️" (orange, pulsing) — <name> is
+# picked once per run from a fixed list in lib/indicator.ts
 
 echo '{"hook_event_name":"Notification"}' | node dist/hooks/hook-handler.js
-# panel -> "Claude wants something!" (blue, pulsing twice as fast)
+# panel -> "Agent <name> needs support 📞" (blue, static — no pulse)
 # also fires a desktop notification (Main.notify) plus a "dialog-question"
-# themed system sound
+# themed system sound, if the Notifications toggle is on
 
 echo '{"hook_event_name":"PermissionRequest"}' | node dist/hooks/hook-handler.js
 # same "waiting" transition as Notification above — PermissionRequest and
 # Notification both map to status: waiting_approval in hook-handler.ts
 
 echo '{"hook_event_name":"PreToolUse"}' | node dist/hooks/hook-handler.js
-# panel -> "Claude is working..." (orange, pulsing) again — confirms the
-# waiting -> running edge fires once a permission prompt is answered and
+# panel -> "Agent <name> is working 🕶️" (orange, pulsing) again — confirms
+# the waiting -> running edge fires once a permission prompt is answered and
 # tool execution resumes, instead of staying blue until Stop
 
 echo '{"hook_event_name":"PreCompact","trigger":"manual"}' | node dist/hooks/hook-handler.js
-# panel -> "Agent <name> is gearing up" (purple, pulsing) — manual /compact
+# panel -> "Agents are training 🔫" (purple, pulsing) — manual /compact; no
+# agent name in this state, since it isn't retained into the next session
 
 echo '{"hook_event_name":"PreCompact","trigger":"auto"}' | node dist/hooks/hook-handler.js
 # no-op: status file is untouched, panel doesn't move — auto-compact isn't
 # surfaced as its own state
 
 echo '{"hook_event_name":"PreCompact","trigger":"manual"}' | node dist/hooks/hook-handler.js
-# panel -> compacting (purple) again. This state file has no transcript_path,
-# so _watchTranscriptForCompactOutcome() has nothing to tail and only the
-# COMPACTING_STALE_MS fallback applies here — leave it alone and wait ~3
-# minutes without firing any other hook, simulating a cancelled /compact.
+# panel -> "Agents are training 🔫" (purple) again. This state file has no
+# transcript_path, so _watchTranscriptForCompactOutcome() has nothing to
+# tail and only the COMPACTING_STALE_MS fallback applies here — leave it
+# alone and wait ~3 minutes without firing any other hook, simulating a
+# cancelled /compact.
 # Confirms the timeout self-heal: panel should fall back to standby on its
 # own without a state.json write forcing it. To test the timeout itself
 # instead of trusting the 3-minute wait, temporarily lower COMPACTING_STALE_MS
@@ -70,9 +79,10 @@ cat > "${XDG_STATE_HOME:-$HOME/.local/state}/claudewatch/state.json" <<EOF
   "transcript_path": "$FAKE_TRANSCRIPT"
 }
 EOF
-# panel -> compacting (purple). Then append one of the two outcome markers
-# Claude Code itself writes on a real /compact, and confirm the panel drops
-# to standby within a second or two — well before the 3-minute fallback:
+# panel -> "Agents are training 🔫" (purple). Then append one of the two
+# outcome markers Claude Code itself writes on a real /compact, and confirm
+# the panel drops to standby within a second or two — well before the
+# 3-minute fallback:
 echo '{"type":"system","subtype":"compact_boundary","content":"Conversation compacted"}' \
   >> "$FAKE_TRANSCRIPT"
 # (repeat the state.json step above and use this line instead to test the
@@ -81,8 +91,9 @@ echo '{"type":"system","subtype":"local_command","content":"<local-command-stder
   >> "$FAKE_TRANSCRIPT"
 
 echo '{"hook_event_name":"Stop"}' | node dist/hooks/hook-handler.js
-# panel -> "Claude is done!" (green flash, then standby after 5s)
-# also fires a desktop notification plus a "complete" themed system sound
+# panel -> "Agent <name> is done 🎖️" (green flash, then "All clear 👀"
+# standby after 5s) — also fires a desktop notification plus a "complete"
+# themed system sound, if the Notifications toggle is on
 ```
 
 Inspect the state file directly if the panel doesn't move:
@@ -94,11 +105,12 @@ cat "${XDG_STATE_HOME:-$HOME/.local/state}/claudewatch/state.json"
 ## End-to-end
 
 Send a real prompt in a Claude Code session with the hooks installed (see
-`~/.claude/settings.json`) and confirm the panel flips to "Claude is
-working..." when the prompt is submitted, to "Claude wants something!" (with
-a notification + sound) if Claude asks a question or needs a permission, and
-to "Claude is done!" (with a notification + sound, then standby after 5s)
-once Claude stops.
+`~/.claude/settings.json`) and confirm the panel flips to "Agent &lt;name&gt;
+is working 🕶️" when the prompt is submitted, to "Agent &lt;name&gt; needs
+support 📞" (with a notification + sound, if the Notifications toggle is on)
+if Claude asks a question or needs a permission, and to "Agent &lt;name&gt;
+is done 🎖️" (with a notification + sound, then "All clear 👀" standby after
+5s) once Claude stops.
 
 ## Popup menu
 
@@ -147,6 +159,12 @@ EOF
     flash on the Refresh Usage row, or check `journalctl --user -f -o cat`
     for a second request. Reopening the menu should never by itself trigger
     a rate-limit request, toggle on or off.
+  - **Notifications** toggle — should be **off** immediately after enabling
+    the extension. With it off, run the "Drive the hook handler directly"
+    `Notification` and `Stop` events and confirm the panel color/text still
+    transition but no `Main.notify` popup or sound fires. Turn the toggle on
+    and repeat: both events should now also produce a notification + themed
+    sound. Toggling should never close the popup menu.
   - **Refresh Usage** button — clicking it should refresh both the Session
     row and the 5h/7d rows without closing the menu, showing "Checking…"
     while the rate-limit request is in flight. Rename the token file

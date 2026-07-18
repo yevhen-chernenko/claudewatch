@@ -3,21 +3,25 @@
 import GLib from "gi://GLib";
 
 // See docs/SECURITY.md "Opt-in network egress" — this file is user-created
-// (`claude setup-token`), never written by the extension, and its presence
-// is what makes the rate-limit check opt-in rather than automatic.
+// (normally a symlink to ~/.claude/.credentials.json; see resolveToken()
+// below for why plain `claude setup-token` output doesn't work here), never
+// written by the extension, and its presence is what makes the rate-limit
+// check opt-in rather than automatic.
 export const TOKEN_PATH = GLib.build_filenamev([
   GLib.get_user_config_dir(),
   "claudewatch",
   "token",
 ]);
 
-// Dedicated usage-status endpoint (same one the official Claude Code CLI's
-// own usage display reads) — a GET with no model invocation, so it costs no
-// API quota, unlike a Messages completion call.
+// Dedicated usage-status endpoint — not exposed via any documented CLI
+// command; this is the same one the popular "Claude Code Usage Tracker" VS
+// Code extension uses (confirmed by reading its bundled source). A GET with
+// no model invocation, so it costs no API quota, unlike a Messages
+// completion call.
 export const RATE_LIMIT_URL = "https://api.anthropic.com/api/oauth/usage";
 
 // ~/.claude/.credentials.json's shape, as read via the token-file symlink —
-// only the field this module reads.
+// only the fields this module reads.
 interface CredentialsFile {
   claudeAiOauth?: {
     accessToken?: string;
