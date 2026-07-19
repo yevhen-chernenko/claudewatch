@@ -2,8 +2,8 @@
 
 // Minimal fake of gi://GLib for tests — covers only the surface
 // src/extension/lib/state.ts and src/extension/lib/rateLimit.ts touch at
-// module scope or inside the functions BACKLOG.md scopes in for coverage.
-// Not a general-purpose GLib shim.
+// module scope or inside their pure, host-independent functions. Not a
+// general-purpose GLib shim.
 
 class FakeDateTime {
   constructor(private readonly date: Date) {}

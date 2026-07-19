@@ -136,7 +136,7 @@ mkdir -p ~/.config/claudewatch
 ln -s ~/.claude/.credentials.json ~/.config/claudewatch/token
 ```
 
-Then click "Refresh Usage" in the popup menu. Full details, including why
+Then click "Show usage" in the popup menu. Full details, including why
 it must be this file specifically (not `claude setup-token` output) and
 what each error message on that row means, are in
 [EXTENSION.md#setting-up-the-claude-usage-token](EXTENSION.md#setting-up-the-claude-usage-token).

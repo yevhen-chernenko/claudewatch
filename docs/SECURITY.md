@@ -61,8 +61,9 @@ usage costs no API quota. Design constraints that keep this contained:
   the one path the user explicitly pointed at a credential, and the token
   it finds there is never written anywhere, only held in memory for one
   request.
-- **Off by default, opt-in cadence when enabled**: clicking "Refresh Usage"
-  is always available and is the only way this request fires by default. An
+- **Off by default, opt-in cadence when enabled**: clicking "Show usage" /
+  "Refresh Usage" is always available and is the only way this request
+  fires by default. An
   "Auto-refresh on task complete" switch (`_autoRefreshItem`, unchecked on
   every `enable()`) lets the user opt into an automatic check as well; when
   on, it fires once per Stop hook event (edge-triggered on the state file's
@@ -164,9 +165,9 @@ Mitigations, concrete and ongoing (not a one-time pass before submission):
 
 ## Hardening checklist (track status as phases land)
 
-- [ ] State directory created with `0700`, files with `0600` — not yet:
-      `hook-handler.ts`'s `mkdirSync`/`writeFileSync` don't pass a `mode`,
-      so both fall back to the process umask (typically `0755`/`0644`).
+- [x] State directory created with `0700`, files with `0600` —
+      `hook-handler.ts`'s `mkdirSync`/`writeFileSync` calls pass `mode`
+      explicitly rather than falling back to the process umask.
 - [x] Atomic writes only (`tmp` + `rename`) for every state file — verified
       in `src/hooks/hook-handler.ts` (`writeFileSync(tmpPath)` +
       `renameSync(tmpPath, statePath)`).

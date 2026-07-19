@@ -37,7 +37,7 @@ an inline label, and the rest collapse into a single "+N more" chip.
 Entering **waiting** or **complete** fires a desktop notification
 (`Main.notify`) paired with a themed system sound (`dialog-question` /
 `complete`) — see `_notify()` in [lib/indicator.ts](../src/extension/lib/indicator.ts)
-— but only if the popup menu's **Notifications** toggle is on (off by
+— but only if the popup menu's **Notifications** toggle is on (on by
 default on every `enable()`; see [Popup menu](#popup-menu) below) — the
 panel color/text change always happens regardless of the toggle.
 **compacting** never notifies even with the toggle on: it's Claude pausing
@@ -259,30 +259,33 @@ bottom:
     per-`AgentLabel` (comparing its `uiState` before/after `applyState()`),
     so it doesn't re-fire on every directory-monitor event while a session
     stays `"done"` or on menu reopen. When off (the default), the edge is
-    still tracked but the request is skipped, so "Refresh Usage" is the
-    only thing that triggers a rate-limit request. The toggle state
-    (`this._autoRefreshOnDone`) is in-memory only — see
+    still tracked but the request is skipped, so the "Show usage"/"Refresh
+    Usage" button is the only thing that triggers a rate-limit request. The
+    toggle state (`this._autoRefreshOnDone`) is in-memory only — see
     [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check)
     for why this stays opt-in (gated on both the token file existing and
     this switch) rather than unconditional, and
     ["Setting up the Claude Usage token"](#setting-up-the-claude-usage-token)
     below for how to actually get it working.
-  - **Notifications** (`_notificationsItem`, `PopupSwitchMenuItem`) — off by
-    default on every `enable()`, same toggle-without-closing-the-menu
-    pattern as Auto-refresh above. Gates every `_notify()` call in
-    `lib/indicator.ts` (the desktop notification + themed sound fired on
-    any session entering **waiting** or **complete**) — each label's
-    color/text always updates regardless of this toggle; only the
-    notification/sound pair is suppressed while it's off. In-memory only
-    (`this._notificationsEnabled`), so it resets to off on every shell
-    reload, same rationale as Auto-refresh.
-  - **Refresh Usage** (`_refreshUsageItem`, `PopupMenuItem`) — manual
-    override on top of the automatic refresh above; `activate` calls
-    `_refreshRateLimits()`. Also doubles as the status display for the
-    rate-limit check specifically — its label reads "Checking…" while a
-    request is in flight, and missing token file, empty token, or a failed
-    request all resolve to an inline error string on this row instead of a
-    silent failure.
+  - **Notifications** (`_notificationsItem`, `PopupSwitchMenuItem`) — on by
+    default on every `enable()` (unlike Auto-refresh above), same
+    toggle-without-closing-the-menu pattern otherwise. Gates every
+    `_notify()` call in `lib/indicator.ts` (the desktop notification +
+    themed sound fired on any session entering **waiting** or **complete**)
+    — each label's color/text always updates regardless of this toggle;
+    only the notification/sound pair is suppressed while it's off. In-memory
+    only (`this._notificationsEnabled`), so it's back on again after every
+    shell reload rather than persisting a user's choice to turn it off.
+  - **Show usage** (`_refreshUsageItem`, `PopupMenuItem`) — manual override
+    on top of the automatic refresh above; `activate` calls
+    `_refreshRateLimits()`. Starts labeled "Show usage" and switches to
+    "Refresh Usage" after the first successful check, since only then is a
+    click actually refreshing something rather than showing it for the
+    first time. Also doubles as the status display for the rate-limit check
+    specifically — its label reads "Checking…" while a request is in
+    flight, and missing token file, empty token, or a failed request all
+    resolve to an inline error string on this row instead of a silent
+    failure.
 - **Exit** (`PopupMenuItem`) — removes the extension's uuid (passed into
   `ClaudeWatchIndicator`'s constructor from `this.uuid` in `extension.ts`) from
   the `org.gnome.shell` `enabled-extensions` gsetting via `Gio.Settings`.
@@ -315,12 +318,13 @@ raw-token form stays supported in case setup-token ever gains the scope.
 
 The symlink target is Claude Code's own credential file (already `0600`),
 and Claude Code refreshes the access token in it whenever it runs — each
-"Refresh Usage" click re-reads the file, so it always sends the current
-token. If the check reports "OAuth token expired", the fix is just to run
-`claude` once so it refreshes the credential.
+"Show usage"/"Refresh Usage" click re-reads the file, so it always sends
+the current token. If the check reports "OAuth token expired", the fix is
+just to run `claude` once so it refreshes the credential.
 
-Then click "Refresh Usage" in the panel menu. First click after setup may
-show "No token file at …" if the file wasn't saved yet — that's the
+Then click "Show usage" in the panel menu (it reads "Refresh Usage" after
+the first successful check). First click after setup may show "No token
+file at …" if the file wasn't saved yet — that's the
 extension correctly reporting its absence, not a bug; re-click once the
 file exists. A successful check reveals the two rows below it with the
 current 5h/7d utilization and reset times.

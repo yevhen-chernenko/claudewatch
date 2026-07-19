@@ -164,6 +164,7 @@ class AgentLabel {
   private _pulseDim = false;
   private _flashTimeoutId: number | null = null;
   private _compactingTimeoutId: number | null = null;
+  private _pulseTimeoutId: number | null = null;
   private _transcriptMonitor: InstanceType<typeof Gio.FileMonitor> | null =
     null;
   private _transcriptMonitorId: number | null = null;
@@ -218,10 +219,15 @@ class AgentLabel {
       this._retire();
       return;
     }
-    if (status === "compacting") {
+    // Arm only on the transition into "compacting", not on every repeat
+    // tick — the directory monitor re-dispatches this session's state on
+    // *any* session's file changing, so arming unconditionally on raw
+    // status would keep resetting the fallback clock off the back of
+    // unrelated sessions' activity and it would never elapse.
+    if (action === "compacting") {
       this._armCompactingTimeout();
       this._watchTranscriptForCompactOutcome();
-    } else {
+    } else if (status !== "compacting") {
       this._clearCompactingTimeout();
       this._stopWatchingTranscript();
     }
@@ -239,6 +245,7 @@ class AgentLabel {
   private _enterRunning(): void {
     this._uiState = "running";
     this._clearFlashTimeout();
+    this._clearPulseTimeout();
     this.actor.style = RUNNING_STYLE;
     this.actor.set_text(runningText(this.agentName));
     this.actor.opacity = 255;
@@ -249,6 +256,7 @@ class AgentLabel {
   private _enterWaiting(): void {
     this._uiState = "waiting";
     this._clearFlashTimeout();
+    this._clearPulseTimeout();
     this.actor.remove_all_transitions();
     this.actor.style = WAITING_STYLE;
     const text = waitingText(this.agentName);
@@ -260,6 +268,7 @@ class AgentLabel {
   private _enterCompacting(): void {
     this._uiState = "compacting";
     this._clearFlashTimeout();
+    this._clearPulseTimeout();
     this.actor.style = COMPACTING_STYLE;
     this.actor.set_text(COMPACTING_TEXT);
     this.actor.opacity = 255;
@@ -275,6 +284,7 @@ class AgentLabel {
     this._uiState = "complete";
     this.actor.remove_all_transitions();
     this._clearFlashTimeout();
+    this._clearPulseTimeout();
     this.actor.opacity = 255;
     this.actor.style = COMPLETE_STYLE;
     const text = completeText(this.agentName);
@@ -399,8 +409,22 @@ class AgentLabel {
     this._transcriptWatchFile = null;
   }
 
+  private _clearPulseTimeout(): void {
+    if (this._pulseTimeoutId) {
+      GLib.source_remove(this._pulseTimeoutId);
+      this._pulseTimeoutId = null;
+    }
+  }
+
   // Only "running" and "compacting" pulse — "waiting" reads clearly enough
-  // from its color/text alone and stays static, same as "complete".
+  // from its color/text alone and stays static, same as "complete". Driven
+  // by GLib.timeout_add rather than ease()'s onComplete: an actor that
+  // isn't mapped (hidden past MAX_INLINE_AGENTS, or mid-teardown) makes
+  // Clutter resolve ease() synchronously, and onComplete recursing straight
+  // back into _pulseLoop() from inside that same synchronous call blows the
+  // stack ("too much recursion") instead of ticking over real time. A
+  // GLib timeout always defers to the main loop regardless of the actor's
+  // mapped state, so this can't recurse no matter what.
   private _pulseLoop(): void {
     if (this._uiState !== "running" && this._uiState !== "compacting") return;
     this._pulseDim = !this._pulseDim;
@@ -408,13 +432,22 @@ class AgentLabel {
       opacity: this._pulseDim ? PULSE_DIM_OPACITY : 255,
       duration: PULSE_HALF_CYCLE_MS,
       mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
-      onComplete: () => this._pulseLoop(),
     });
+    this._pulseTimeoutId = GLib.timeout_add(
+      GLib.PRIORITY_DEFAULT,
+      PULSE_HALF_CYCLE_MS,
+      () => {
+        this._pulseTimeoutId = null;
+        this._pulseLoop();
+        return GLib.SOURCE_REMOVE;
+      },
+    );
   }
 
   destroy(): void {
     this._clearFlashTimeout();
     this._clearCompactingTimeout();
+    this._clearPulseTimeout();
     this._stopWatchingTranscript();
     this.actor.remove_all_transitions();
     this.actor.destroy();
@@ -658,11 +691,9 @@ export class ClaudeWatchIndicator {
     );
     this._agents.set(sessionId, label);
     this._order.push(sessionId);
-    // Parent the actor into the box before running applyState() below —
-    // easing an actor's opacity before it's on stage completes instantly
-    // and synchronously in Clutter, so onComplete's recursive _pulseLoop()
-    // call would recurse with zero delay and blow the stack ("too much
-    // recursion") instead of animating over time.
+    // Parent the actor into the box before running applyState() below so
+    // the very first ease() (from _enterRunning()/_enterCompacting() inside
+    // it) has somewhere on-stage to animate rather than resolving instantly.
     this._syncBox();
     label.applyState(state, true);
   }

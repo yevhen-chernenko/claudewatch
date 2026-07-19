@@ -1,8 +1,13 @@
 # Manual testing
 
 Status: for the per-session implementation (see
-[ARCHITECTURE.md](ARCHITECTURE.md)). No automated tests yet — this is what
-to run by hand after touching `src/extension/extension.ts`, anything under
+[ARCHITECTURE.md](ARCHITECTURE.md)). The pure logic (`resolveUiAction()`/
+`deriveEffectiveStatus()` in `lib/state.ts`, the formatting/token helpers in
+`lib/rateLimit.ts`, `resolveStatus()` in `hooks/lib/status.ts`) has vitest
+coverage (`npm test`) — this doc is for everything else: the GJS-dependent
+glue in `extension.ts`, `lib/indicator.ts`, and `hooks/hook-handler.ts`'s
+stdin/fs wrapper, none of which can run under Node. This is what to run by
+hand after touching `src/extension/extension.ts`, anything under
 `src/extension/lib/`, or `src/hooks/hook-handler.ts`. See
 [EXTENSION.md](EXTENSION.md#file-layout) for what lives in each file, and
 [EXTENSION.md#building](EXTENSION.md#building) for the `npm run build` step
@@ -25,10 +30,10 @@ the panel after each command — it updates within ~1s via the
 `npm run build` first so `dist/hooks/hook-handler.js` is current.
 
 Notifications (`Main.notify` + themed sound) only fire while the popup
-menu's **Notifications** toggle is on — off by default on every `enable()`.
-Turn it on first (open the menu, flip the switch) if you want to exercise
-that part of the script below; the panel color/text transitions themselves
-happen either way.
+menu's **Notifications** toggle is on — on by default on every `enable()`.
+Turn it off first (open the menu, flip the switch) if you want to confirm
+they're suppressed; the panel color/text transitions themselves happen
+either way.
 
 ```sh
 echo '{"hook_event_name":"UserPromptSubmit","session_id":"test-1"}' | node dist/hooks/hook-handler.js
@@ -186,15 +191,16 @@ Click the indicator to open the menu.
     that transitions to done. With two sessions live, fire `Stop` on both
     in the same beat and confirm the check only fires once per session's
     own edge, not once per directory-monitor tick.
-  - **Notifications** toggle — should be **off** immediately after enabling
-    the extension. With it off, run the "Drive the hook handler directly"
-    `Notification` and `Stop` events and confirm the panel color/text still
-    transition but no `Main.notify` popup or sound fires. Turn the toggle on
-    and repeat: both events should now also produce a notification + themed
-    sound. Toggling should never close the popup menu.
-  - **Refresh Usage** button — clicking it should refresh the 5h/7d rows
-    without closing the menu, showing "Checking…" while the rate-limit
-    request is in flight. Rename
+  - **Notifications** toggle — should be **on** immediately after enabling
+    the extension. Turn it off and run the "Drive the hook handler directly"
+    `Notification` and `Stop` events, and confirm the panel color/text still
+    transition but no `Main.notify` popup or sound fires. Turn the toggle
+    back on and repeat: both events should now also produce a notification +
+    themed sound. Toggling should never close the popup menu.
+  - **Show usage / Refresh Usage** button — clicking it should refresh the
+    5h/7d rows without closing the menu, showing "Checking…" while the
+    rate-limit request is in flight; its label starts as "Show usage" and
+    switches to "Refresh Usage" after the first successful check. Rename
     the token file temporarily to confirm the "No token file at …" message
     appears on this row (with both 5h/7d rows hidden) instead of a silent
     failure; truncate it to an empty file to confirm "Token file is empty".

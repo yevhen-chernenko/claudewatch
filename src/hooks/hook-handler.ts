@@ -52,7 +52,10 @@ const status = resolveStatus(
 );
 
 if (status) {
-  fs.mkdirSync(sessionsDir, { recursive: true });
+  // 0700/0600: state files can carry transcript_path, so other local
+  // accounts on a shared machine shouldn't be able to read them — see
+  // SECURITY.md's threat model.
+  fs.mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
   const statePath = sessionFilePath(sessionId);
   const tmpPath = `${statePath}.tmp`;
   fs.writeFileSync(
@@ -68,6 +71,7 @@ if (status) {
       // by one that ended without ever firing Stop (killed terminal, crash).
       pid: process.ppid,
     }),
+    { mode: 0o600 },
   );
   fs.renameSync(tmpPath, statePath);
 }
