@@ -9,11 +9,28 @@ describe("resolveStatus", () => {
     expect(resolveStatus("UserPromptSubmit", undefined)).toBe("running");
     expect(resolveStatus("PreToolUse", undefined)).toBe("running");
     expect(resolveStatus("PostToolUse", undefined)).toBe("running");
-    expect(resolveStatus("Notification", undefined)).toBe("waiting_approval");
     expect(resolveStatus("PermissionRequest", undefined)).toBe(
       "waiting_approval",
     );
     expect(resolveStatus("Stop", undefined)).toBe("done");
+  });
+
+  it("maps Notification to waiting_approval only for a real pending-input type", () => {
+    expect(
+      resolveStatus("Notification", undefined, "permission_prompt"),
+    ).toBe("waiting_approval");
+    expect(
+      resolveStatus("Notification", undefined, "elicitation_dialog"),
+    ).toBe("waiting_approval");
+  });
+
+  it("does not surface an idle nudge or a completion notification as waiting", () => {
+    expect(resolveStatus("Notification", undefined, "idle_prompt")).toBeUndefined();
+    expect(resolveStatus("Notification", undefined, "auth_success")).toBeUndefined();
+    expect(
+      resolveStatus("Notification", undefined, "elicitation_complete"),
+    ).toBeUndefined();
+    expect(resolveStatus("Notification", undefined)).toBeUndefined();
   });
 
   it("maps PreCompact to compacting only for a manual trigger", () => {

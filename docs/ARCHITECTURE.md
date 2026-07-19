@@ -55,9 +55,11 @@ in `~/.claude/settings.json`. The CLI, the VS Code extension, and the Claude
 Desktop app's Code tab all run the same underlying engine and share that
 settings file (hooks, MCP servers, `CLAUDE.md`, skills), so any **locally
 executing** session is visible to ClaudeWatch regardless of surface, with no
-surface-specific code. Verified directly: a bare `claude -p` session and a
-VS Code-extension-driven session both produce/update the same
-`<session_id>.json` shape and go through the same lifecycle.
+surface-specific code. Verified directly on Ubuntu 24.04.4 across all three
+locally-executing input surfaces — the CLI (`claude -p` and interactive), the
+official VS Code extension, and the Claude Desktop app's Code tab — each
+produces/updates the same `<session_id>.json` shape and goes through the same
+lifecycle.
 
 This does not extend to Claude Code sessions where the engine itself runs on
 a different machine than this one — the Desktop app's Remote/SSH/Cloud

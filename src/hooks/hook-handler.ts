@@ -22,6 +22,10 @@ interface HookInput {
   // — an auto-compact is an implementation detail of an already-running
   // session, not something worth surfacing in the panel.
   trigger?: string;
+  // Only present on Notification; distinguishes an actual pending-input
+  // reason (e.g. "permission_prompt") from unrelated ones the same event
+  // also fires for (e.g. "idle_prompt", a no-op nudge — see resolveStatus).
+  notification_type?: string;
 }
 
 // session_id is a UUID in practice, but sanitize defensively before it
@@ -41,7 +45,11 @@ if (input.hook_event_name === "SessionEnd") {
   process.exit(0);
 }
 
-const status = resolveStatus(input.hook_event_name, input.trigger);
+const status = resolveStatus(
+  input.hook_event_name,
+  input.trigger,
+  input.notification_type,
+);
 
 if (status) {
   fs.mkdirSync(sessionsDir, { recursive: true });
