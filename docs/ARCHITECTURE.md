@@ -47,6 +47,25 @@ hook handler (node, zero deps)
 GNOME extension (indicator + popup menu)
 ```
 
+## Surface independence
+
+ClaudeWatch never distinguishes *how* Claude Code was launched — the hook
+handler only reacts to hook events, and hooks are configured once, globally,
+in `~/.claude/settings.json`. The CLI, the VS Code extension, and the Claude
+Desktop app's Code tab all run the same underlying engine and share that
+settings file (hooks, MCP servers, `CLAUDE.md`, skills), so any **locally
+executing** session is visible to ClaudeWatch regardless of surface, with no
+surface-specific code. Verified directly: a bare `claude -p` session and a
+VS Code-extension-driven session both produce/update the same
+`<session_id>.json` shape and go through the same lifecycle.
+
+This does not extend to Claude Code sessions where the engine itself runs on
+a different machine than this one — the Desktop app's Remote/SSH/Cloud
+session environments, and cloud-run Cowork background agents. Their hook
+commands execute on that other host, so no local state file is ever written
+here. This is an inherent boundary of the file-per-session design (see
+[Components](#components)), not a bug to fix.
+
 ## Session state file
 
 One file per Claude Code session, so concurrent sessions never contend for
