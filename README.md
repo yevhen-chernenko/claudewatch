@@ -2,9 +2,11 @@
 
 GNOME Shell extension that shows live Claude Code activity in your top panel.
 
-**Status: in development.** Not yet installable or usable — full details
-(installation, usage, screenshots) will be added here once there's a working
-release. See [docs/ROADMAP.md](docs/ROADMAP.md) for current progress.
+**Status: in development.** Not yet installable via an installer — everything
+still has to be wired up by hand. See [docs/SETUP.md](docs/SETUP.md) for the
+full first-time setup walkthrough (build, GNOME extension, Claude Code hook
+wiring, optional usage tracking) and [docs/ROADMAP.md](docs/ROADMAP.md) for
+current progress.
 
 ## Development
 
