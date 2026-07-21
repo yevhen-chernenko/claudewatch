@@ -68,4 +68,24 @@ describe("deriveEffectiveStatus", () => {
     expect(deriveEffectiveStatus("standby", false)).toBe("standby");
     expect(deriveEffectiveStatus(undefined, false)).toBeUndefined();
   });
+
+  it("clears a stale running status even while the session is alive", () => {
+    // The pid check alone can't catch a turn that ended by interruption
+    // rather than a clean Stop — the CLI process is genuinely still alive,
+    // just idling with no further hook ever firing for that session.
+    expect(deriveEffectiveStatus("running", true, true)).toBeUndefined();
+  });
+
+  it("does not treat waiting_approval or compacting as stale", () => {
+    expect(deriveEffectiveStatus("waiting_approval", true, true)).toBe(
+      "waiting_approval",
+    );
+    expect(deriveEffectiveStatus("compacting", true, true)).toBe(
+      "compacting",
+    );
+  });
+
+  it("defaults isRunningStale to false for existing 2-arg call sites", () => {
+    expect(deriveEffectiveStatus("running", true)).toBe("running");
+  });
 });

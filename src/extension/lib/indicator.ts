@@ -91,6 +91,18 @@ const PULSE_DIM_OPACITY = Math.round(255 * 0.72);
 // mid-flight.
 const COMPACTING_STALE_MS = 3 * 60 * 1000;
 
+// Bounds how long a "running" status is trusted once its own file stops
+// moving — see deriveEffectiveStatus's isRunningStale param in state.ts for
+// why pid-liveness can't catch this on its own (a turn that ends by
+// interruption, not a clean Stop, leaves the CLI process alive and idling
+// with no further hook ever firing for that session). Deliberately on a
+// much longer leash than COMPACTING_STALE_MS: an actual compaction is
+// bounded and rare, but a single legitimate tool call (a big test suite, a
+// package install) can easily run this long between PreToolUse/PostToolUse
+// updates, and this must clear comfortably past that or it'll retire a
+// task that's still genuinely in flight.
+const RUNNING_STALE_MS = 20 * 60 * 1000;
+
 // Labels beyond this count collapse into a single "+N more" chip so the
 // panel bar can't grow unbounded with many concurrent sessions — full
 // detail for every session is always in the popup menu.
@@ -124,6 +136,17 @@ function isSessionAlive(state: SessionState): boolean {
   const pid = state.pid;
   if (pid == null) return true;
   return Gio.File.new_for_path(`/proc/${pid}`).query_exists(null);
+}
+
+// Plain-boolean computation of "has this session's own file gone quiet for
+// too long while stuck on running" — see RUNNING_STALE_MS above and
+// deriveEffectiveStatus's isRunningStale param in state.ts for why this
+// exists alongside isSessionAlive rather than being covered by it.
+function isRunningStale(state: SessionState): boolean {
+  if (state.status !== "running" || !state.updated_at) return false;
+  const updatedAt = Date.parse(state.updated_at);
+  if (Number.isNaN(updatedAt)) return false;
+  return Date.now() - updatedAt > RUNNING_STALE_MS;
 }
 
 // Picks a name for a newly-seen session, avoiding names already in use by
@@ -205,7 +228,11 @@ class AgentLabel {
   // version — see its comment in lib/state.ts.
   applyState(state: SessionState, isInitial: boolean): void {
     this._state = state;
-    const status = deriveEffectiveStatus(state.status, isSessionAlive(state));
+    const status = deriveEffectiveStatus(
+      state.status,
+      isSessionAlive(state),
+      isRunningStale(state),
+    );
     const action = resolveUiAction(status, this._lastStatus, isInitial);
     this._lastStatus = status ?? null;
     if (action === "running") this._enterRunning();
@@ -661,7 +688,11 @@ export class ClaudeWatchIndicator {
         if (!wasDone && isDoneNow === "complete") justCompleted = true;
         continue;
       }
-      const status = deriveEffectiveStatus(state.status, isSessionAlive(state));
+      const status = deriveEffectiveStatus(
+        state.status,
+        isSessionAlive(state),
+        isRunningStale(state),
+      );
       if (
         status !== "running" &&
         status !== "waiting_approval" &&

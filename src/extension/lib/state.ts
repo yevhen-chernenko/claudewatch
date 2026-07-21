@@ -36,10 +36,26 @@ export type UiAction =
 // standby on the initial refresh. Takes the liveness check as a plain
 // boolean (rather than doing the /proc lookup itself) so this stays pure and
 // testable like resolveUiAction below.
+//
+// isRunningStale covers a gap pid-liveness can't: Claude Code fires no hook
+// at all when a turn ends by interruption rather than a clean Stop — e.g.
+// the user rejects/aborts a tool call and sends something else instead, so
+// there's no PostToolUse, no Stop, no SessionEnd, and the CLI process just
+// goes back to idling. The session is genuinely alive throughout, so the
+// pid check alone can never tell that apart from a task still in flight,
+// and "running" would otherwise stick forever. Same shape of problem
+// indicator.ts's COMPACTING_STALE_MS bounds for an abandoned /compact;
+// isRunningStale is that same idea computed by the caller from
+// updated_at/now (see RUNNING_STALE_MS's own comment for why it's on a much
+// longer leash) and passed in as a plain boolean for the same testability
+// reason as isSessionAlive. Defaulted so existing 2-arg call sites are
+// unaffected.
 export function deriveEffectiveStatus(
   status: string | undefined,
   isSessionAlive: boolean,
+  isRunningStale: boolean = false,
 ): string | undefined {
+  if (status === "running" && isRunningStale) return undefined;
   if (isSessionAlive) return status;
   if (
     status === "running" ||

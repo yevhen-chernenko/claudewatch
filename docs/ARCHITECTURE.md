@@ -116,6 +116,20 @@ touched it, so a session whose process was killed mid-run (no `Stop`, no
 pid-liveness check re-evaluated and its label retired instead of sticking
 forever.
 
+pid-liveness alone doesn't cover every way a session goes quiet, though: if
+a turn ends by interruption rather than a clean `Stop` (e.g. the user
+rejects/aborts a tool call and sends something else instead), Claude Code
+fires no hook at all for that — no `PostToolUse`, no `Stop`, no
+`SessionEnd` — and the CLI process just goes back to idling, alive the
+whole time. `deriveEffectiveStatus`'s `isRunningStale` param (`state.ts`),
+fed by `RUNNING_STALE_MS` in `indicator.ts`, is the fallback for that case:
+a "running" status whose file hasn't moved in 20 minutes is no longer
+trusted regardless of pid-liveness. The same periodic re-scan above is what
+re-evaluates it, so no separate timer is needed. On a much longer leash
+than the `waiting_approval`/`compacting` cases specifically because a
+single legitimate tool call (a big test suite, a package install) can
+easily run this long between hook updates on its own.
+
 ## Extension internals
 
 - `extension.js`: `Extension` subclass per the GNOME 45+ ESM API.
