@@ -97,13 +97,14 @@ same filesystem) — never a partial-write read by the extension.
 
 ### Session lifecycle / state machine
 
-| Hook event                                        | Transition                                                                                |
-| ------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `UserPromptSubmit` / `PreToolUse` / `PostToolUse` | `status: running` (creates the file on first sight of a session)                          |
-| `Notification` / `PermissionRequest`              | `status: waiting_approval`, fire desktop notification (if the Notifications toggle is on) |
-| `PreCompact` (`trigger: "manual"`)                | `status: compacting`; `trigger: "auto"` is a no-op — not surfaced as its own state        |
-| `Stop`                                            | `status: done`; the panel flashes green for 5s then the session's label retires           |
-| `SessionEnd`                                      | delete the session's file immediately — the common-case cleanup path                      |
+| Hook event | Transition |
+| - | - |
+| `UserPromptSubmit` / `PreToolUse` / `PostToolUse` | `status: running` (creates the file on first sight of a session) |
+| `PreToolUse` (`tool_name: "AskUserQuestion"`) | `status: waiting_approval` — blocks on a direct user response, bypassing `PermissionRequest`/`Notification` |
+| `Notification` / `PermissionRequest` | `status: waiting_approval`, fire desktop notification (if the Notifications toggle is on) |
+| `PreCompact` (`trigger: "manual"`) | `status: compacting`; `trigger: "auto"` is a no-op — not surfaced as its own state |
+| `Stop` | `status: done`; the panel flashes green for 5s then the session's label retires |
+| `SessionEnd` | delete the session's file immediately — the common-case cleanup path |
 
 Garbage collection: `SessionEnd` deleting the file is the common path. Two
 fallbacks cover what it can't: (1) whenever an `AgentLabel` retires for any

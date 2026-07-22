@@ -26,6 +26,9 @@ interface HookInput {
   // reason (e.g. "permission_prompt") from unrelated ones the same event
   // also fires for (e.g. "idle_prompt", a no-op nudge — see resolveStatus).
   notification_type?: string;
+  // Present on PreToolUse/PostToolUse; lets resolveStatus special-case
+  // tools that block on a direct user response (see WAITING_TOOL_NAMES).
+  tool_name?: string;
 }
 
 // session_id is a UUID in practice, but sanitize defensively before it
@@ -49,6 +52,7 @@ const status = resolveStatus(
   input.hook_event_name,
   input.trigger,
   input.notification_type,
+  input.tool_name,
 );
 
 if (status) {

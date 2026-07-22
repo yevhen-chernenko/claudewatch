@@ -33,6 +33,21 @@ describe("resolveStatus", () => {
     expect(resolveStatus("Notification", undefined)).toBeUndefined();
   });
 
+  it("maps PreToolUse to waiting_approval for tools that block on a direct user response", () => {
+    expect(
+      resolveStatus("PreToolUse", undefined, undefined, "AskUserQuestion"),
+    ).toBe("waiting_approval");
+  });
+
+  it("leaves PreToolUse/PostToolUse as running for ordinary tools, including after an answered question", () => {
+    expect(resolveStatus("PreToolUse", undefined, undefined, "Bash")).toBe(
+      "running",
+    );
+    expect(
+      resolveStatus("PostToolUse", undefined, undefined, "AskUserQuestion"),
+    ).toBe("running");
+  });
+
   it("maps PreCompact to compacting only for a manual trigger", () => {
     expect(resolveStatus("PreCompact", "manual")).toBe("compacting");
   });
