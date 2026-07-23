@@ -151,6 +151,14 @@ it must be this file specifically (not `claude setup-token` output) and
 what each error message on that row means, are in
 [EXTENSION.md#setting-up-the-claude-usage-token](EXTENSION.md#setting-up-the-claude-usage-token).
 
+The same token file also powers "Detailed usage" — a terminal-based,
+auto-refreshing view of the same check — so no separate setup is needed
+for it beyond this step. It additionally needs **Python 3** (stdlib only,
+already on most distros) and **a terminal emulator on `PATH`**
+(`gnome-terminal`/GNOME Console are already present on stock GNOME; set
+`$TERMINAL` if you use something else it doesn't already know about — see
+[EXTENSION.md](EXTENSION.md#popup-menu)).
+
 ## Troubleshooting
 
 - **Panel never leaves "Agents are recovering ☕", even mid-prompt**: almost

@@ -21,6 +21,7 @@ import {
   formatRateLimitWindow,
   resolveToken,
 } from "./rateLimit.js";
+import { pickTerminalCommand } from "./terminal.js";
 
 // Each live session gets its own label with the same state machine the
 // single-session version had, minus the shared "standby" state: idle
@@ -59,7 +60,7 @@ const completeText = (name: string) => `Agent ${name} is done 🎖️`;
 // missing entirely on state files predating this field, hence the fallback.
 const consultingText = (name: string, agentType?: string) =>
   agentType
-    ? `Agent ${name} is consulting ${agentType} 📓`
+    ? `Agent ${name} is consulting "${agentType}" manual 📓`
     : `Agent ${name} is consulting notes 📓`;
 const COMPACTING_TEXT = "Agents are training 🔫"; // no agent name — it isn't retained into the next session
 
@@ -202,7 +203,9 @@ function isConsultingStale(state: SessionState): boolean {
 // applies before feeding deriveEffectiveStatus's single isStale param.
 function isStale(state: SessionState): boolean {
   return (
-    isRunningStale(state) || isCompactingStale(state) || isConsultingStale(state)
+    isRunningStale(state) ||
+    isCompactingStale(state) ||
+    isConsultingStale(state)
   );
 }
 
@@ -624,6 +627,9 @@ export class ClaudeWatchIndicator {
   private readonly _refreshUsageItem: InstanceType<
     typeof PopupMenu.PopupMenuItem
   >;
+  private readonly _detailedUsageItem: InstanceType<
+    typeof PopupMenu.PopupMenuItem
+  >;
   private readonly _raiseIssueItem: InstanceType<
     typeof PopupMenu.PopupMenuItem
   >;
@@ -636,6 +642,7 @@ export class ClaudeWatchIndicator {
   private readonly _exitItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
 
   private readonly _httpSession: InstanceType<typeof Soup.Session>;
+  private readonly _extensionPath: string;
   private readonly _onSessionRetired: (sessionId: string) => void;
   private _autoRefreshOnDone = false;
   private _notificationsEnabled = true;
@@ -648,9 +655,11 @@ export class ClaudeWatchIndicator {
   constructor(
     uuid: string,
     name: string,
+    extensionPath: string,
     onSessionRetired: (sessionId: string) => void,
   ) {
     this._uuid = uuid;
+    this._extensionPath = extensionPath;
     this._onSessionRetired = onSessionRetired;
 
     this.button = new PanelMenu.Button(0.0, name, false);
@@ -713,6 +722,15 @@ export class ClaudeWatchIndicator {
     });
     this._menu.addMenuItem(this._refreshUsageItem);
 
+    this._detailedUsageItem = new PopupMenu.PopupMenuItem("Detailed usage");
+    // Same close-triggering-click override as _refreshUsageItem above.
+    this._detailedUsageItem.activate = () => this._onDetailedUsageClicked();
+    this._detailedUsageItem.label.clutter_text.set({
+      line_wrap: true,
+      line_wrap_mode: Pango.WrapMode.WORD_CHAR,
+    });
+    this._menu.addMenuItem(this._detailedUsageItem);
+
     this._autoRefreshItem = new PopupMenu.PopupSwitchMenuItem(
       "Auto-refresh usage",
       false,
@@ -760,9 +778,7 @@ export class ClaudeWatchIndicator {
     );
     this._menu.addMenuItem(this._discussionsItem);
 
-    this._viewSourceItem = new PopupMenu.PopupMenuItem(
-      "View source on GitHub",
-    );
+    this._viewSourceItem = new PopupMenu.PopupMenuItem("View source on GitHub");
     this._viewSourceItem.connect("activate", () =>
       Gio.AppInfo.launch_default_for_uri(
         "https://github.com/yevhen-chernenko/claudewatch",
@@ -886,6 +902,40 @@ export class ClaudeWatchIndicator {
 
   private _onRefreshUsageClicked(): void {
     this._refreshRateLimits();
+  }
+
+  // Opens a terminal running detailed-usage.py — a fuller, auto-refreshing
+  // view of the same opt-in rate-limit check as _refreshRateLimits() above,
+  // just read from a terminal instead of this popup menu (see
+  // SECURITY.md#opt-in-network-egress-the-rate-limit-check). There's no
+  // OS-level "default terminal" standard on Linux, so pickTerminalCommand()
+  // (lib/terminal.ts) is necessarily best-effort: $TERMINAL first, then a
+  // fixed list of common terminal emulators. Gio.Subprocess.new() can
+  // genuinely throw (e.g. exec failure), so the try/catch here is a real
+  // failure path, not defensive padding.
+  private _onDetailedUsageClicked(): void {
+    const scriptPath = GLib.build_filenamev([
+      this._extensionPath,
+      "detailed-usage.py",
+    ]);
+    const argv = pickTerminalCommand(
+      scriptPath,
+      GLib.getenv("TERMINAL"),
+      (name) => GLib.find_program_in_path(name),
+    );
+    if (!argv) {
+      this._detailedUsageItem.label.set_text(
+        "Detailed usage — no terminal emulator found on PATH",
+      );
+      return;
+    }
+    try {
+      Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
+    } catch (e) {
+      this._detailedUsageItem.label.set_text(
+        `Detailed usage — failed to launch terminal: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
   private _refreshRateLimits(): void {

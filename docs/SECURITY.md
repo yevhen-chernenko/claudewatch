@@ -49,6 +49,21 @@ confirmed by reading its bundled source), not a Messages completion — no
 model gets invoked, so unlike an earlier version of this feature, checking
 usage costs no API quota. Design constraints that keep this contained:
 
+"Detailed usage" (`_onDetailedUsageClicked`) is a second, terminal-based
+entry point onto this exact same check, not a separate one: it opens a
+terminal running `extension/detailed-usage.py`, a stdlib-only script that
+reads the same `TOKEN_PATH` and calls the same single endpoint on its own
+60-second timer, so a fuller view fits than the popup menu's two compact
+rows. It's also the first (and only) feature where the extension spawns a
+subprocess — see the "External scripts/binaries" guideline below for why
+that's constrained, not just disclosed here: the script it launches is
+bundled plain-text source (never a compiled/opaque binary), the terminal
+choice comes from `pickTerminalCommand()` (`lib/terminal.ts`) trying
+`$TERMINAL` then a fixed list of known terminal emulators — never a
+user-configurable command — and the spawned process needs no elevated
+privileges. Everything below about the token/endpoint applies to this
+entry point exactly as it does to "Show usage"/"Refresh Usage".
+
 - **Opt-in by construction, not a setting**: the check does nothing unless
   `~/.config/claudewatch/token` exists. The extension never creates, writes,
   or discovers this file itself — the user creates it manually, normally as
@@ -80,11 +95,17 @@ usage costs no API quota. Design constraints that keep this contained:
   extension writes** — it is read from `TOKEN_PATH` and held only in memory
   for the life of one
   request.
+- **"Detailed usage" only ever launches one fixed, repo-bundled script**:
+  clicking it is the only way `Gio.Subprocess` fires; there is no menu-open
+  or interval-based auto-launch. The argv is always `<a terminal found on
+  PATH> <fixed flag> <the path to detailed-usage.py>` — never a
+  user-supplied path or command, so this can't be repurposed into running
+  arbitrary commands via config.
 
-If EGO review flags this, the mitigation is to ship it disabled by default
-or split it into a separate optional extension — not to widen scope here
-casually. This whole section exists so that exception is disclosed, not
-silently reintroduced.
+If EGO review flags either of these, the mitigation is to ship the
+affected one disabled by default or split it into a separate optional
+extension — not to widen scope here casually. This whole section exists so
+both exceptions are disclosed, not silently reintroduced.
 
 ## GNOME Shell extension review guidelines (EGO)
 
@@ -113,10 +134,13 @@ Re-check both before submission — guidelines evolve.
 - **External scripts/binaries**: "strongly discouraged... unless
   unavoidable." The hook handler already lives outside the reviewed package
   (Claude Code invokes it directly, not the extension), so this mainly
-  constrains what the _extension itself_ may spawn. If the extension ever
-  needs to run something (it shouldn't, for v1 — file reads only), it must
-  use `Gio.Subprocess`, never a bundled binary, never anything requiring
-  elevated privileges.
+  constrains what the _extension itself_ may spawn. "Detailed usage" is the
+  one deliberate, disclosed instance of the extension itself spawning
+  something (see "Opt-in network egress" above) — a dropdown button that
+  opens a terminal is unavoidably a subprocess spawn. It follows the rule
+  exactly: `Gio.Subprocess`, a bundled plain-text script rather than a
+  compiled binary, no elevated privileges. Nothing else in the extension
+  spawns anything.
 - **GSettings schema**: ID namespaced `org.gnome.shell.extensions.<uuid>`,
   path `/org/gnome/shell/extensions/<uuid>/`, `.gschema.xml` shipped and
   compiled correctly. Pin the extension UUID early — see the open question
@@ -196,6 +220,11 @@ Mitigations, concrete and ongoing (not a one-time pass before submission):
       else in the extension and hook handler stays local-only. `Soup` is
       only imported in `src/extension/lib/indicator.ts`, and only used inside
       `_probeRateLimits()`.
+- [x] No subprocess spawning except the opt-in, user-triggered "Detailed
+      usage" button — `Gio.Subprocess` is only imported/used in
+      `_onDetailedUsageClicked()` (`lib/indicator.ts`), spawns only a
+      terminal emulator plus the fixed, bundled `detailed-usage.py`, never
+      a user-configurable command.
 - [x] No telemetry/analytics
 - [x] Hook handler has zero npm dependencies (reduces supply-chain surface
       to just Node's builtins) — `src/hooks/hook-handler.ts` only requires

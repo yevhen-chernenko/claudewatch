@@ -18,7 +18,8 @@ coverage (`npm test`) — this doc is for everything else: the GJS-dependent
 glue in `extension.ts`, `lib/indicator.ts`, and `hooks/hook-handler.ts`'s
 stdin/fs wrapper, none of which can run under Node. This is what to run by
 hand after touching `src/extension/extension.ts`, anything under
-`src/extension/lib/`, or `src/hooks/hook-handler.ts`. See
+`src/extension/lib/`, `extension/detailed-usage.py`, or
+`src/hooks/hook-handler.ts`. See
 [EXTENSION.md](EXTENSION.md#file-layout) for what lives in each file, and
 [EXTENSION.md#building](EXTENSION.md#building) for the `npm run build` step
 these commands assume you've already run.
@@ -218,6 +219,22 @@ Click the indicator to open the menu.
     claudeAiOauth.accessToken in token file", and with a copy of
     `.credentials.json` whose `expiresAt` is edited into the past to
     confirm "OAuth token expired — run claude to refresh it".
+  - **Detailed usage** — with the token file set up, click it and confirm a
+    terminal window opens showing "Claude usage — detailed view", the same
+    5h/7d numbers as the popup (now with both a relative and absolute reset
+    time), and a progress bar counting up to "next refresh in 60s" that
+    ticks down once per second and triggers a fresh fetch when it completes
+    — leave it running past one full cycle to confirm the auto-refresh
+    actually happens, not just the countdown. Confirm Ctrl-C inside that
+    terminal exits cleanly (a "Stopped." line, no traceback) and closes
+    only that window, not the extension or any other session. Rename/empty
+    the token file first to confirm the terminal shows the same "No token
+    file at …"/"Token file is empty"/"OAuth token expired…" text as the
+    "Show usage" row instead of crashing. To test the no-terminal-found
+    path, temporarily rename every terminal emulator binary on `PATH` (or
+    run in an environment without one) and confirm this row's own label
+    becomes an inline "no terminal emulator found on PATH" error instead of
+    the click silently doing nothing.
 - **Exit** — clicking it should remove the indicator from the panel
   immediately and it should not reappear on the next login (it's gone from
   `dconf read /org/gnome/shell/enabled-extensions`) until re-enabled via

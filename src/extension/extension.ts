@@ -37,6 +37,7 @@ export default class ClaudeWatchExtension extends Extension {
     this._indicator = new ClaudeWatchIndicator(
       this.uuid,
       this.metadata.name,
+      this.path,
       (sessionId) => this._deleteSessionFile(sessionId),
     );
     Main.panel.addToStatusArea(this.uuid, this._indicator.button);

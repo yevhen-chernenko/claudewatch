@@ -15,5 +15,10 @@ mkdirSync(join(root, "dist", "extension", "icons"), { recursive: true });
 cpSync(join(root, "extension", "icons"), join(root, "dist", "extension", "icons"), {
   recursive: true,
 });
+cpSync(
+  join(root, "extension", "detailed-usage.py"),
+  join(root, "dist", "extension", "detailed-usage.py"),
+);
 
 chmodSync(join(root, "dist", "hooks", "hook-handler.js"), 0o755);
+chmodSync(join(root, "dist", "extension", "detailed-usage.py"), 0o755);

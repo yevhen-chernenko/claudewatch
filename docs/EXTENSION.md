@@ -87,17 +87,20 @@ src/
     lib/
       state.ts
       rateLimit.ts
+      terminal.ts
       indicator.ts
   hooks/
     hook-handler.ts
 extension/            # static assets only — copied into dist/extension/ as-is
   metadata.json
   icons/
+  detailed-usage.py
 dist/                 # build output (gitignored)
   extension/
     extension.js
     metadata.json
     icons/
+    detailed-usage.py
     lib/*.js
   hooks/
     hook-handler.js
@@ -117,6 +120,14 @@ dist/                 # build output (gitignored)
 - `lib/rateLimit.ts` — `TOKEN_PATH`, `RATE_LIMIT_URL`, and the pure
   formatting helpers (`formatResetTime`, `formatRateLimitWindow`) for the
   account-level rate-limit check.
+- `lib/terminal.ts` — `pickTerminalCommand()`, the pure argv-resolution
+  logic behind the "Detailed usage" row: given `$TERMINAL` and an injected
+  PATH-lookup function, picks which terminal emulator to spawn and how.
+- `extension/detailed-usage.py` (top-level, not under `src/` — a static
+  asset like `metadata.json`, not TypeScript) — the stdlib-only script
+  "Detailed usage" launches; ports the same token-resolution and
+  formatting rules as `lib/rateLimit.ts` to Python, against the same
+  endpoint, on its own 60-second loop.
 - `lib/indicator.ts` — two classes: `AgentLabel` (one per live session —
   owns its panel label widget and the pulse/notify/compacting-watch state
   machine) and `ClaudeWatchIndicator` (owns the `PanelMenu.Button`, the
@@ -286,6 +297,22 @@ bottom:
     flight, and missing token file, empty token, or a failed request all
     resolve to an inline error string on this row instead of a silent
     failure.
+  - **Detailed usage** (`_detailedUsageItem`, `PopupMenuItem`) — opens a
+    terminal running `extension/detailed-usage.py`, a fuller,
+    auto-refreshing (every 60s, with a progress bar to the next refresh)
+    view of the exact same check as the row above, just with room for both
+    a relative and absolute reset time per window instead of one compact
+    line. Reads the same `~/.config/claudewatch/token` on its own — see
+    ["Setting up the Claude Usage token"](#setting-up-the-claude-usage-token)
+    — so it needs no setup beyond what "Show usage" already needs. Which
+    terminal it opens is necessarily best-effort (`pickTerminalCommand()`,
+    `lib/terminal.ts`): `$TERMINAL` if set, else the first of
+    `gnome-terminal`/`kgx`/`konsole`/`xfce4-terminal`/`xterm` found on
+    `PATH`. If none is found, or `Gio.Subprocess` fails to launch it, this
+    row's own label becomes the inline error instead of the click silently
+    doing nothing. The script itself is stdlib-only Python (no pip
+    dependencies) and keeps running — independent of the extension —
+    until the terminal window is closed or the user hits Ctrl-C.
 - **Exit** (`PopupMenuItem`) — removes the extension's uuid (passed into
   `ClaudeWatchIndicator`'s constructor from `this.uuid` in `extension.ts`) from
   the `org.gnome.shell` `enabled-extensions` gsetting via `Gio.Settings`.
