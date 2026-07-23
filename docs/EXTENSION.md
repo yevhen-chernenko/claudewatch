@@ -14,19 +14,24 @@ from per-session JSON state files written by the compiled
 ${XDG_STATE_HOME:-~/.local/state}/claudewatch/sessions/<session_id>.json
 ```
 
-Each session's label goes through four states while it's live: a task in
+Each session's label goes through five states while it's live: a task in
 flight (**running**, pulsing orange, "Agent &lt;name&gt; is working 🕶️"),
 paused on a permission prompt or question (**waiting**, static blue — no
 pulse, since the color and text alone read clearly enough, "Agent
 &lt;name&gt; needs support 📞"), a manual `/compact` in progress
 (**compacting**, pulsing purple at the same rate as running, "Agents are
 training 🔫" — no agent name, since it isn't retained into the next
-session), and the 5s flash right after a task finishes (**complete**,
+session), a `Stop` that landed while a subagent it spawned hasn't reported
+back yet (**consulting**, pulsing olive at the same rate as running, "Agent
+&lt;name&gt; is consulting notes 📓" — see
+[ARCHITECTURE.md](ARCHITECTURE.md#backgrounded-subagent-work) for why this
+needs its own state instead of flashing "done" early or looking stuck on
+"running"), and the 5s flash right after a task finishes (**complete**,
 static green, "Agent &lt;name&gt; is done 🎖️") before that session's label
 is removed for good. The agent name is picked once per session (when its
 label is first created, from a fixed list in `lib/indicator.ts`) and reused
-across running/waiting/complete until the session retires; concurrent
-sessions avoid picking the same name as each other where possible
+across running/waiting/consulting/complete until the session retires;
+concurrent sessions avoid picking the same name as each other where possible
 (`pickAgentName()`). When no session is live, the panel shows a single
 static "Agents are recovering ☕" label — it only appears once every session has
 retired, never alongside a live one.
@@ -47,14 +52,14 @@ as an implementation detail of the running task rather than its own state
 — see the `PreCompact`/`trigger` handling in
 [hooks/hook-handler.ts](../src/hooks/hook-handler.ts).
 
-A `running`/`waiting_approval`/`compacting` status is only trusted while the
-session that wrote it is still alive: the hook handler records its own
-process's ppid (the Claude Code CLI process, since hooks run in exec form)
-as `pid` in the session's state file, and `isSessionAlive()` in
-`lib/indicator.ts` checks `/proc/<pid>` before applying one of those three
-statuses to a session — a killed terminal or crashed session that never
-fired `Stop` retires immediately (no green flash) instead of leaving its
-label stuck. A session's file disappearing from the directory entirely
+A `running`/`waiting_approval`/`compacting`/`waiting_background` status is
+only trusted while the session that wrote it is still alive: the hook
+handler records its own process's ppid (the Claude Code CLI process, since
+hooks run in exec form) as `pid` in the session's state file, and
+`isSessionAlive()` in `lib/indicator.ts` checks `/proc/<pid>` before
+applying one of those four statuses to a session — a killed terminal or
+crashed session that never fired `Stop` retires immediately (no green
+flash) instead of leaving its label stuck. A session's file disappearing from the directory entirely
 (`SessionEnd` cleanup, or a manual delete) is treated the same way, unless
 that session is already mid-complete-flash — see `AgentLabel.handleMissing()`.
 

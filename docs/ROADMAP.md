@@ -45,7 +45,8 @@ Goal: the feature set described in the brief, working locally, and ready to
 ship on the GNOME Extensions library (EGO).
 
 What's landed so far — per-session state machine (running / waiting_approval
-/ compacting / done, one `AgentLabel` per live session) with per-session
+/ compacting / waiting_background / done, one `AgentLabel` per live session)
+with per-session
 agent-name flavor text, multiple concurrent sessions each getting their own
 panel label (capped inline with a "+N more" overflow chip), a "Notifications"
 toggle (on by default) gating the desktop notifications wired to the

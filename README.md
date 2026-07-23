@@ -8,6 +8,21 @@ full first-time setup walkthrough (build, GNOME extension, Claude Code hook
 wiring, optional usage tracking) and [docs/ROADMAP.md](docs/ROADMAP.md) for
 current progress.
 
+## Panel states
+
+Each live Claude Code session gets its own panel label, cycling through
+these states (full state-machine details in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#session-lifecycle--state-machine)):
+
+| State | Color | Example label | When |
+| - | - | - | - |
+| 🟠 running | orange | "Agent Smith is working 🕶️" | a tool call or turn is in flight |
+| 🔵 waiting | blue | "Agent Smith needs support 📞" | paused on a permission prompt or a question — needs you |
+| 🟣 compacting | purple | "Agents are training 🔫" | a manual `/compact` is in progress |
+| 🟡 consulting | olive | "Agent Smith is consulting notes 📓" | the turn ended but a spawned subagent hasn't reported back yet |
+| 🟢 complete | green | "Agent Smith is done 🎖️" | just finished — flashes for 5s, then the label disappears |
+| ⚪ standby | grey | "Agents are recovering ☕" | no session is live |
+
 ## Development
 
 Written in TypeScript; `npm run build` compiles `src/` to `dist/`, which is

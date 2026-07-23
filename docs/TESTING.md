@@ -166,6 +166,31 @@ echo '{"hook_event_name":"SessionEnd","session_id":"test-1"}' | node dist/hooks/
 # deletes sessions/test-1.json immediately — if run while a label is still
 # live (before its complete flash elapses), confirm the flash is NOT cut
 # short (AgentLabel.handleMissing() no-ops while uiState is "complete").
+
+echo '{"hook_event_name":"UserPromptSubmit","session_id":"consult-1"}' | node dist/hooks/hook-handler.js
+# panel -> "Agent <name> is working 🕶️" (orange, pulsing)
+
+echo '{"hook_event_name":"SubagentStart","session_id":"consult-1","agent_type":"Explore"}' | node dist/hooks/hook-handler.js
+# still "running" — a subagent starting doesn't change the visible state on
+# its own, it only increments the session's pendingBackgroundCount
+
+echo '{"hook_event_name":"Stop","session_id":"consult-1"}' | node dist/hooks/hook-handler.js
+# panel -> "Agent <name> is consulting "Explore" manual 📓" (olive, pulsing)
+# — the visible turn ended but the subagent it spawned hasn't reported back
+# yet, so this reads as its own "consulting" state instead of flashing
+# "done" early or looking stuck on "running"
+
+echo '{"hook_event_name":"SubagentStop","session_id":"consult-1"}' | node dist/hooks/hook-handler.js
+# panel -> back to "Agent <name> is working 🕶️" (orange, pulsing) — the
+# subagent reported back, pendingBackgroundCount drops to 0, and the parent
+# turn resumes
+
+echo '{"hook_event_name":"Stop","session_id":"consult-1"}' | node dist/hooks/hook-handler.js
+# panel -> "Agent <name> is done 🎖️" (green flash, then "Agents are
+# recovering ☕" once the label retires) — nothing left pending this time
+
+echo '{"hook_event_name":"SessionEnd","session_id":"consult-1"}' | node dist/hooks/hook-handler.js
+# deletes sessions/consult-1.json
 ```
 
 Inspect a session's state file directly if the panel doesn't move:
