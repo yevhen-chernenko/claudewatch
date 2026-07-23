@@ -19,6 +19,10 @@ cpSync(
   join(root, "extension", "detailed-usage.py"),
   join(root, "dist", "extension", "detailed-usage.py"),
 );
+cpSync(
+  join(root, "extension", "ascii.txt"),
+  join(root, "dist", "extension", "ascii.txt"),
+);
 
 chmodSync(join(root, "dist", "hooks", "hook-handler.js"), 0o755);
 chmodSync(join(root, "dist", "extension", "detailed-usage.py"), 0o755);
