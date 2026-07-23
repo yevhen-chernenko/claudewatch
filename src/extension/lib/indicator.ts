@@ -76,7 +76,7 @@ const COMPLETE_STYLE =
 const COMPACTING_STYLE =
   "padding: 0 6px; background-color: #7a3fa0; border-radius: 4px; color: #ffffff;"; // 6.89:1
 const CONSULTING_STYLE =
-  "padding: 0 6px; background-color: #106a6a; border-radius: 4px; color: #ffffff;"; // 6.38:1
+  "padding: 0 6px; background-color: #7a5f00; border-radius: 4px; color: #ffffff;"; // 6.06:1
 const OVERFLOW_STYLE =
   "padding: 0 6px; background-color: #333a3d; border-radius: 4px; color: #ffffff;"; // 11.6:1
 const COMPLETE_FLASH_MS = 5000;
