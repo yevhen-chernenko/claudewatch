@@ -32,6 +32,38 @@ live, and only after a `npm run build`:
 - X11: Alt+F2, type `r`, Enter.
 - Wayland: log out and back in (no in-session reload).
 
+## Dev preview menu
+
+Fastest way to check a visual (color, text, pulse, flash timing) without
+driving a real hook event or writing a state file. Create a `.env` file at
+the repo root containing:
+
+```sh
+CLAUDEWATCH_DEV=1
+```
+
+(already gitignored, same as any other local-only config) and run
+`npm run build` — `copy-assets.mjs` copies it into `dist/extension/.env`
+next to `detailed-usage.py`/`ascii.txt`/etc., and `indicator.ts`'s
+`readDevModeFlag()` reads it back from there at `enable()` time. A process
+env var doesn't work for this: GNOME Shell inherits its environment from the
+display manager / login session, not from whatever terminal `npm run build`
+happens to run in, so the file is what actually gets read. Reload the
+extension (see above) to pick it up.
+
+With it set, the popup menu gets a "Dev: preview state" section at the
+bottom with one button per possible panel look: Standby / clear preview,
+Running, Waiting, Compacting, Consulting, Complete, and the Overflow chip.
+Clicking one closes the menu (so the panel is unobstructed for a screenshot)
+and drives a synthetic `__preview__` label through the same `AgentLabel`
+code real sessions use — it never touches `sessions/` on disk and is
+invisible to `applyStates()`, so it can't be retired by a real session's
+file changing and doesn't affect anything a real session is doing
+concurrently. "Complete" replays the real green flash and auto-retires after
+`COMPLETE_FLASH_MS` (5s) exactly like a real completion. Without a
+`CLAUDEWATCH_DEV=1` in `dist/extension/.env`, this section doesn't exist —
+nothing to disable for a normal install/build.
+
 ## Drive the hook handler directly
 
 Simulates the wired events without needing a real Claude Code turn. Every

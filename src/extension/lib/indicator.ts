@@ -125,6 +125,19 @@ const MAX_INLINE_AGENTS = 3;
 
 type UiState = "running" | "waiting" | "complete" | "compacting" | "consulting";
 
+// Every visual the panel can ever show, for the CLAUDEWATCH_DEV preview menu
+// (see ClaudeWatchIndicator's constructor) — one entry per UiState plus
+// "standby" (no label at all) and "overflow" (the "+N more" chip), so the
+// menu can cover every possible look without needing a real session.
+type PreviewKind =
+  | "standby"
+  | "running"
+  | "waiting"
+  | "compacting"
+  | "consulting"
+  | "complete"
+  | "overflow";
+
 // Actor's `ease()` is JS-side sugar from environment.js (not
 // GIR-introspected, so ts-for-gir never sees it) — a real GNOME Shell API
 // the community @girs types don't model. A `declare module` augmentation of
@@ -200,6 +213,39 @@ function isStale(state: SessionState): boolean {
     isCompactingStale(state) ||
     isConsultingStale(state)
   );
+}
+
+// Whether the "Dev: preview state" menu section should be built — read from
+// a `.env` file shipped next to detailed-usage.py/ascii.txt/etc. in the
+// extension's own directory (copy-assets.mjs copies the repo root's .env
+// there, when one exists) rather than a process env var: GNOME Shell runs as
+// a long-lived session process that inherits its environment from the
+// display manager / login session, not from whatever terminal you happen to
+// run `npm run build` in, so a real env var set there would never actually
+// reach it. A repo-root `.env` (gitignored, same as any other local-only
+// config) sidesteps that entirely. Read synchronously since this only ever
+// runs once, at ClaudeWatchIndicator construction — GNOME Shell's own
+// enable() is already synchronous by the time this constructor runs, so
+// there's no async flow here to fit into.
+function readDevModeFlag(extensionPath: string): boolean {
+  const path = GLib.build_filenamev([extensionPath, ".env"]);
+  let contents: string;
+  try {
+    const [, bytes] = Gio.File.new_for_path(path).load_contents(null);
+    contents = new TextDecoder().decode(bytes);
+  } catch {
+    return false; // No .env shipped with this build — the common case.
+  }
+  for (const line of contents.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    if (trimmed.slice(0, eq).trim() === "CLAUDEWATCH_DEV") {
+      return trimmed.slice(eq + 1).trim() === "1";
+    }
+  }
+  return false;
 }
 
 // Picks a name for a newly-seen session, avoiding names already in use by
@@ -631,6 +677,15 @@ export class ClaudeWatchIndicator {
   // MAX_INLINE_AGENTS live at once.
   private readonly _order: string[] = [];
 
+  // Dev-only visual QA aid, populated by the CLAUDEWATCH_DEV preview menu
+  // built in the constructor below. Deliberately kept out of `_agents`/
+  // `_order`: those two drive every read of real on-disk session state
+  // (applyStates(), _syncBox(), handleMissing() on a vanished file), so a
+  // synthetic preview "session" living in there could get silently retired
+  // the moment any real session's file change triggers the next disk scan.
+  private _previewLabel: AgentLabel | null = null;
+  private _previewActor: InstanceType<typeof St.Label> | null = null;
+
   constructor(
     uuid: string,
     name: string,
@@ -728,6 +783,37 @@ export class ClaudeWatchIndicator {
     this._exitItem = new PopupMenu.PopupMenuItem("Exit ClaudeWatch");
     this._exitItem.connect("activate", () => this._onExit());
     this._menu.addMenuItem(this._exitItem);
+
+    // Visual QA only — lets every panel look (including ones that normally
+    // need a real live session, like "complete"'s green flash) be pulled up
+    // on demand for screenshots, without a real hook event or session file.
+    // Gated on readDevModeFlag() rather than shipped unconditionally so it
+    // can never appear for a real user: nothing here reads real session
+    // state, and _setPreviewState()/_clearPreview() only ever touch the
+    // dev-only _previewLabel/_previewActor fields, never `_agents`/`_order`.
+    if (readDevModeFlag(extensionPath)) {
+      this._menu.addMenuItem(
+        new PopupMenu.PopupSeparatorMenuItem("Dev: preview state"),
+      );
+      const previewItems: { label: string; kind: PreviewKind }[] = [
+        { label: "Standby / clear preview", kind: "standby" },
+        { label: "Running", kind: "running" },
+        { label: "Waiting", kind: "waiting" },
+        { label: "Compacting", kind: "compacting" },
+        { label: "Consulting", kind: "consulting" },
+        { label: "Complete", kind: "complete" },
+        { label: "Overflow chip (+N more)", kind: "overflow" },
+      ];
+      for (const { label, kind } of previewItems) {
+        const item = new PopupMenu.PopupMenuItem(label);
+        // Default activate() (unlike _showUsageItem's/_notificationsItem's
+        // overridden one above) closes the menu same as Exit/View source —
+        // wanted here so the panel is unobstructed right after picking a
+        // state, ready to screenshot.
+        item.connect("activate", () => this._setPreviewState(kind));
+        this._menu.addMenuItem(item);
+      }
+    }
   }
 
   // Called by extension.js with every session's freshly-parsed state-file
@@ -816,6 +902,72 @@ export class ClaudeWatchIndicator {
     }
   }
 
+  // Drives the dev-only preview menu built in the constructor. Reuses
+  // AgentLabel itself (rather than reimplementing its styles/text/pulsing)
+  // so a preview can never drift from what a real session actually looks
+  // like — it's fed a synthetic SessionState instead of one read off disk,
+  // going through the exact same applyState() a real disk-driven refresh
+  // uses, but the resulting label is never added to `_agents`/`_order`, so
+  // the real applyStates()/handleMissing() path can never see or retire it.
+  private _setPreviewState(kind: PreviewKind): void {
+    this._clearPreview();
+    if (kind === "standby") return;
+    if (kind === "overflow") {
+      this._previewActor = new St.Label({
+        text: "+2 more",
+        y_align: Clutter.ActorAlign.CENTER,
+        style: OVERFLOW_STYLE,
+      });
+      this._box.add_child(this._previewActor);
+      this._box.set_child_below_sibling(this._previewActor, this._overflowLabel);
+      return;
+    }
+    this._previewLabel = new AgentLabel(
+      "__preview__",
+      "Preview",
+      () => {}, // No desktop notification/sound spam while clicking through states.
+      () => this._clearPreview(),
+    );
+    this._box.add_child(this._previewLabel.actor);
+    this._box.set_child_below_sibling(
+      this._previewLabel.actor,
+      this._overflowLabel,
+    );
+    if (kind === "complete") {
+      // resolveUiAction() only fires the green flash on a status -> "done"
+      // *edge*, not on a first-ever refresh (see its isInitialRefresh branch
+      // in state.ts) — so previewing the real flash+auto-retire needs a
+      // running start state first, then a second call that actually crosses
+      // the edge, same as a real session finishing a turn.
+      this._previewLabel.applyState({ status: "running" }, true);
+      this._previewLabel.applyState({ status: "done" }, false);
+      return;
+    }
+    const statusForKind: Record<
+      Exclude<PreviewKind, "standby" | "overflow" | "complete">,
+      string
+    > = {
+      running: "running",
+      waiting: "waiting_approval",
+      compacting: "compacting",
+      consulting: "waiting_background",
+    };
+    const state: SessionState = { status: statusForKind[kind] };
+    if (kind === "consulting") state.backgroundAgentType = "Explore";
+    this._previewLabel.applyState(state, true);
+  }
+
+  private _clearPreview(): void {
+    if (this._previewLabel) {
+      this._previewLabel.destroy();
+      this._previewLabel = null;
+    }
+    if (this._previewActor) {
+      this._previewActor.destroy();
+      this._previewActor = null;
+    }
+  }
+
   // Desktop notification paired with a themed system sound — every waiting/
   // complete transition fires both together. Uses the shell's own sound
   // player (same mechanism as the screenshot/volume sounds) rather than
@@ -875,6 +1027,7 @@ export class ClaudeWatchIndicator {
   // connected — destroying `button` (a widget) takes its child actors and
   // menu items with it.
   destroy(): void {
+    this._clearPreview();
     for (const label of this._agents.values()) label.destroy();
     this._agents.clear();
     this._order.length = 0;
