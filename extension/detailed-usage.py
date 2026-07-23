@@ -160,7 +160,8 @@ SEPARATOR_WIDTH = LABEL_WIDTH + 1 + BAR_WIDTH
 
 
 def separator():
-    out(fg(COLOR_MUTED, "┈" * SEPARATOR_WIDTH))
+    pattern = "".join("#" if i % 2 == 0 else ":" for i in range(SEPARATOR_WIDTH))
+    out(fg(COLOR_BANNER, pattern))
 
 
 def render(data, error, remaining):
@@ -199,8 +200,6 @@ def render(data, error, remaining):
             label_color=COLOR_MUTED,
         )
     )
-    out()
-    out(fg(COLOR_MUTED, "Ctrl-C to stop."))
 
     if error:
         out()
