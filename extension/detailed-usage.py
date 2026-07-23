@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Launched by ClaudeWatch's "Detailed usage" menu item (lib/indicator.ts).
-# Same opt-in token file and endpoint as the popup menu's "Show usage" row
-# (lib/rateLimit.ts) — this is a fuller, terminal-based view of that same
-# check, not a separate one. Stdlib only, no pip dependencies.
+# Launched by ClaudeWatch's "Show usage" menu item (lib/indicator.ts) — the
+# extension's only usage source; this script owns the opt-in token
+# resolution, request, and formatting on its own. Stdlib only, no pip
+# dependencies.
 
 import json
 import os

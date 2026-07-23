@@ -86,7 +86,6 @@ src/
     extension.ts
     lib/
       state.ts
-      rateLimit.ts
       terminal.ts
       indicator.ts
   hooks/
@@ -117,17 +116,15 @@ dist/                 # build output (gitignored)
   a session that's no longer alive), and `resolveUiAction()`, the pure
   edge-detection function that decides which UI transition (if any) a given
   status change triggers for one session — reused by every live `AgentLabel`.
-- `lib/rateLimit.ts` — `TOKEN_PATH`, `RATE_LIMIT_URL`, and the pure
-  formatting helpers (`formatResetTime`, `formatRateLimitWindow`) for the
-  account-level rate-limit check.
 - `lib/terminal.ts` — `pickTerminalCommand()`, the pure argv-resolution
-  logic behind the "Detailed usage" row: given `$TERMINAL` and an injected
+  logic behind the "Show usage" row: given `$TERMINAL` and an injected
   PATH-lookup function, picks which terminal emulator to spawn and how.
 - `extension/detailed-usage.py` (top-level, not under `src/` — a static
   asset like `metadata.json`, not TypeScript) — the stdlib-only script
-  "Detailed usage" launches; ports the same token-resolution and
-  formatting rules as `lib/rateLimit.ts` to Python, against the same
-  endpoint, on its own 60-second loop.
+  "Show usage" launches; a self-contained account-level rate-limit check
+  (token resolution, the `/api/oauth/usage` request, and formatting all
+  live in this one script) on its own 60-second refresh loop. This is the
+  extension's only usage source — there's no TypeScript-side equivalent.
 - `lib/indicator.ts` — two classes: `AgentLabel` (one per live session —
   owns its panel label widget and the pulse/notify/compacting-watch state
   machine) and `ClaudeWatchIndicator` (owns the `PanelMenu.Button`, the
@@ -143,9 +140,8 @@ dist/                 # build output (gitignored)
   comment above that assertion explains the tradeoff in place instead.
 
 The split keeps GNOME Shell side-effecting code (widgets, signals, main-loop
-sources, network I/O — all in `lib/indicator.ts` and `extension.ts`) separate
-from pure logic (`lib/state.ts`, the formatting half of `lib/rateLimit.ts`)
-that needs no shell environment to run or test. GNOME
+sources — all in `lib/indicator.ts` and `extension.ts`) separate from pure
+logic (`lib/state.ts`) that needs no shell environment to run or test. GNOME
 Shell's ESM extension format (45+) resolves these as ordinary relative
 imports at runtime — the `tsc` build only type-checks and downlevels syntax,
 it never rewrites import specifiers or bundles, so `dist/` is plain ESM JS
@@ -181,16 +177,16 @@ See each file's own imports for the up-to-date list; briefly, by module:
   timeout), `Main` (`Main.panel.addToStatusArea`), `Extension` (the
   `enable()`/`disable()` lifecycle base class).
 - `lib/indicator.ts` — `St`, `Clutter` (widget toolkit + the actor alignment
-  enum), `GLib` (timeouts, easing durations), `Gio` (async file reads,
-  `Gio.Settings` for the Exit item, the `/proc/<pid>` liveness check),
-  `Main`/`PanelMenu`/`PopupMenu` (panel indicator + menu widgets), and
-  `Soup` (libsoup 3.0) — the one network-capable import in the whole
-  extension, used only by the account-level rate-limit check. See
-  [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check) for
-  why this is the sole exception to the local-only design.
-- `lib/state.ts`, `lib/rateLimit.ts` — `GLib` only, for XDG-respecting path
-  construction (`get_user_state_dir()`/`get_user_config_dir()`) and (in
-  `rateLimit.ts`) `GLib.DateTime` reset-time math.
+  enum), `GLib` (timeouts, easing durations, spawning the terminal for
+  "Show usage"), `Gio` (async file reads, `Gio.Settings` for the Exit item,
+  the `/proc/<pid>` liveness check, `Gio.Subprocess` for "Show usage"), and
+  `Main`/`PanelMenu`/`PopupMenu` (panel indicator + menu widgets). No
+  network-capable import — the extension itself makes no network calls; the
+  account-level rate-limit check happens entirely out-of-process in the
+  spawned `extension/detailed-usage.py`. See
+  [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check).
+- `lib/state.ts` — `GLib` only, for XDG-respecting path construction
+  (`get_user_state_dir()`).
 
 ## Lifecycle
 
@@ -242,77 +238,41 @@ See each file's own imports for the up-to-date list; briefly, by module:
 Built in `ClaudeWatchIndicator`'s constructor (`lib/indicator.ts`), top to
 bottom:
 
-- **"Claude Usage" section** — a labeled `PopupSeparatorMenuItem` heading
-  the account-level rate-limit rows plus a refresh button, all
-  `reactive: false` except the button:
-  - **5h** / **7d** (`_rateLimit5hItem`/`_rateLimit7dItem`) — the
-    account-level rate-limit windows. Reads a bearer token from
-    `~/.config/claudewatch/token` (created out of band, normally as a
-    symlink to `~/.claude/.credentials.json` — see
+- **"Claude Usage" section** — a labeled `PopupSeparatorMenuItem` heading a
+  single button:
+  - **Show usage** (`_showUsageItem`, `PopupMenuItem`) — opens a terminal
+    running `extension/detailed-usage.py`, an auto-refreshing (every 60s,
+    with a progress bar to the next refresh) view of the account-level 5h/7d
+    rate-limit windows. This is the only usage source in the extension —
+    there's no inline rate-limit row in the popup menu itself. The script
+    reads a bearer token from `~/.config/claudewatch/token` (created out of
+    band, normally as a symlink to `~/.claude/.credentials.json` — see
     ["Setting up the Claude Usage token"](#setting-up-the-claude-usage-token);
     the extension never writes this file) and GETs
     `api.anthropic.com/api/oauth/usage` — a dedicated usage-status endpoint,
     not a Messages completion, so it costs no API quota to check (same
     endpoint the popular "Claude Code Usage Tracker" VS Code extension
     uses). There's no local file or documented CLI command that exposes
-    this directly. `formatRateLimitWindow()` (`lib/rateLimit.ts`) turns each
-    window's `utilization`/`resets_at` JSON response fields into its own
-    row's text (`5h 27% (resets in 1h 0m)`, `7d 11% (resets Wed 2:00 AM)`). A
-    window missing from the response renders as `5h: unavailable` rather
-    than hiding the row, so a partial response is still visibly a partial
-    response. Both rows stay hidden until a check succeeds, and re-hide
-    while a new check is in flight, so stale numbers are never shown as
-    current. Account-level, so this section isn't per-session.
-  - **Auto-refresh on task complete** (`_autoRefreshItem`,
-    `PopupSwitchMenuItem`) — off by default on every `enable()`. When on,
-    `applyStates()` triggers `_refreshRateLimits()` once per refresh in
-    which _any_ session's status edge-transitions to `"done"` — tracked
-    per-`AgentLabel` (comparing its `uiState` before/after `applyState()`),
-    so it doesn't re-fire on every directory-monitor event while a session
-    stays `"done"` or on menu reopen. When off (the default), the edge is
-    still tracked but the request is skipped, so the "Show usage"/"Refresh
-    Usage" button is the only thing that triggers a rate-limit request. The
-    toggle state (`this._autoRefreshOnDone`) is in-memory only — see
+    this directly. Which terminal it opens is necessarily best-effort
+    (`pickTerminalCommand()`, `lib/terminal.ts`): `$TERMINAL` if set, else
+    the first of `gnome-terminal`/`kgx`/`konsole`/`xfce4-terminal`/`xterm`
+    found on `PATH`. If none is found, or `Gio.Subprocess` fails to launch
+    it, this row's own label becomes the inline error instead of the click
+    silently doing nothing. The script itself is stdlib-only Python (no pip
+    dependencies) and keeps running — independent of the extension — until
+    the terminal window is closed or the user hits Ctrl-C. See
     [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check)
-    for why this stays opt-in (gated on both the token file existing and
-    this switch) rather than unconditional, and
-    ["Setting up the Claude Usage token"](#setting-up-the-claude-usage-token)
-    below for how to actually get it working.
+    for why this stays opt-in (gated on the token file existing) rather than
+    unconditional.
   - **Notifications** (`_notificationsItem`, `PopupSwitchMenuItem`) — on by
-    default on every `enable()` (unlike Auto-refresh above), same
-    toggle-without-closing-the-menu pattern otherwise. Gates every
-    `_notify()` call in `lib/indicator.ts` (the desktop notification +
-    themed sound fired on any session entering **waiting** or **complete**)
-    — each label's color/text always updates regardless of this toggle;
-    only the notification/sound pair is suppressed while it's off. In-memory
-    only (`this._notificationsEnabled`), so it's back on again after every
-    shell reload rather than persisting a user's choice to turn it off.
-  - **Show usage** (`_refreshUsageItem`, `PopupMenuItem`) — manual override
-    on top of the automatic refresh above; `activate` calls
-    `_refreshRateLimits()`. Starts labeled "Show usage" and switches to
-    "Refresh Usage" after the first successful check, since only then is a
-    click actually refreshing something rather than showing it for the
-    first time. Also doubles as the status display for the rate-limit check
-    specifically — its label reads "Checking…" while a request is in
-    flight, and missing token file, empty token, or a failed request all
-    resolve to an inline error string on this row instead of a silent
-    failure.
-  - **Detailed usage** (`_detailedUsageItem`, `PopupMenuItem`) — opens a
-    terminal running `extension/detailed-usage.py`, a fuller,
-    auto-refreshing (every 60s, with a progress bar to the next refresh)
-    view of the exact same check as the row above, just with room for both
-    a relative and absolute reset time per window instead of one compact
-    line. Reads the same `~/.config/claudewatch/token` on its own — see
-    ["Setting up the Claude Usage token"](#setting-up-the-claude-usage-token)
-    — so it needs no setup beyond what "Show usage" already needs. Which
-    terminal it opens is necessarily best-effort (`pickTerminalCommand()`,
-    `lib/terminal.ts`): `$TERMINAL` if set, else the first of
-    `gnome-terminal`/`kgx`/`konsole`/`xfce4-terminal`/`xterm` found on
-    `PATH`. If none is found, or `Gio.Subprocess` fails to launch it, this
-    row's own label becomes the inline error instead of the click silently
-    doing nothing. The script itself is stdlib-only Python (no pip
-    dependencies) and keeps running — independent of the extension —
-    until the terminal window is closed or the user hits Ctrl-C.
+    default on every `enable()`, toggle-without-closing-the-menu pattern.
+    Gates every `_notify()` call in `lib/indicator.ts` (the desktop
+    notification + themed sound fired on any session entering **waiting**
+    or **complete**) — each label's color/text always updates regardless of
+    this toggle; only the notification/sound pair is suppressed while it's
+    off. In-memory only (`this._notificationsEnabled`), so it's back on
+    again after every shell reload rather than persisting a user's choice to
+    turn it off.
 - **Exit** (`PopupMenuItem`) — removes the extension's uuid (passed into
   `ClaudeWatchIndicator`'s constructor from `this.uuid` in `extension.ts`) from
   the `org.gnome.shell` `enabled-extensions` gsetting via `Gio.Settings`.
@@ -335,7 +295,7 @@ ln -s ~/.claude/.credentials.json ~/.config/claudewatch/token
 ```
 
 The token file may contain either credentials.json-format JSON (as with the
-symlink above — `resolveToken()` in `lib/rateLimit.ts` extracts
+symlink above — `resolve_token()` in `extension/detailed-usage.py` extracts
 `claudeAiOauth.accessToken` from it) or a raw bearer token. The symlink is
 the form that works: `/api/oauth/usage` requires the `user:profile` scope,
 which only the interactive `claude` login credential carries — a token
@@ -345,13 +305,12 @@ raw-token form stays supported in case setup-token ever gains the scope.
 
 The symlink target is Claude Code's own credential file (already `0600`),
 and Claude Code refreshes the access token in it whenever it runs — each
-"Show usage"/"Refresh Usage" click re-reads the file, so it always sends
-the current token. If the check reports "OAuth token expired", the fix is
-just to run `claude` once so it refreshes the credential.
+refresh in the terminal view re-reads the file, so it always sends the
+current token. If the check reports "OAuth token expired", the fix is just
+to run `claude` once so it refreshes the credential.
 
-Then click "Show usage" in the panel menu (it reads "Refresh Usage" after
-the first successful check). First click after setup may show "No token
-file at …" if the file wasn't saved yet — that's the
-extension correctly reporting its absence, not a bug; re-click once the
-file exists. A successful check reveals the two rows below it with the
-current 5h/7d utilization and reset times.
+Then click "Show usage" in the panel menu — it opens a terminal running
+`extension/detailed-usage.py`. A missing or empty token file, or a failed
+request, all resolve to an inline error/status line in that terminal
+instead of a silent failure. A successful check shows the current 5h/7d
+utilization and reset times, auto-refreshing every 60s.

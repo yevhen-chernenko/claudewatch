@@ -141,11 +141,11 @@ extension, or Desktop app's Code tab all work identically — see
 and send a prompt. See [TESTING.md](TESTING.md) for a much longer scripted
 walkthrough covering multi-session, notifications, and the popup menu.
 
-## Step 5 — Optional: the "Claude Usage" rate-limit row
+## Step 5 — Optional: the "Claude Usage" rate-limit check
 
-Skip this if you don't care about the 5h/7d usage percentages in the popup
-menu — nothing else in the extension depends on it. It's opt-in by design
-(see [SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check)):
+Skip this if you don't care about the 5h/7d usage percentages — nothing
+else in the extension depends on it. It's opt-in by design (see
+[SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check)):
 the extension never creates this file itself.
 
 ```sh
@@ -153,17 +153,16 @@ mkdir -p ~/.config/claudewatch
 ln -s ~/.claude/.credentials.json ~/.config/claudewatch/token
 ```
 
-Then click "Show usage" in the popup menu. Full details, including why
-it must be this file specifically (not `claude setup-token` output) and
-what each error message on that row means, are in
+Then click "Show usage" in the popup menu — it opens a terminal running a
+fuller, auto-refreshing view of the check. Full details, including why
+the token must be this file specifically (not `claude setup-token` output)
+and what each error message means, are in
 [EXTENSION.md#setting-up-the-claude-usage-token](EXTENSION.md#setting-up-the-claude-usage-token).
 
-The same token file also powers "Detailed usage" — a terminal-based,
-auto-refreshing view of the same check — so no separate setup is needed
-for it beyond this step. It additionally needs **Python 3** (stdlib only,
-already on most distros) and **a terminal emulator on `PATH`**
-(`gnome-terminal`/GNOME Console are already present on stock GNOME; set
-`$TERMINAL` if you use something else it doesn't already know about — see
+It additionally needs **Python 3** (stdlib only, already on most distros)
+and **a terminal emulator on `PATH`** (`gnome-terminal`/GNOME Console are
+already present on stock GNOME; set `$TERMINAL` if you use something else
+it doesn't already know about — see
 [EXTENSION.md](EXTENSION.md#popup-menu)).
 
 ## Troubleshooting

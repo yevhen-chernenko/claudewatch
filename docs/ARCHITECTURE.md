@@ -221,13 +221,13 @@ easily run this long between hook updates on its own.
   hidden behind another session's running/idle state. Labels beyond a small
   inline cap fold into a "+N more" chip; the "Agents are recovering ☕" label shows only
   when zero sessions are live.
-- Popup menu: the account-level "Claude Usage" rate-limit section, plus
-  auto-refresh/notification toggles and an "Exit" action.
+- Popup menu: a "Claude Usage" section (a single "Show usage" button that
+  opens the account-level rate-limit check in a terminal), a notification
+  toggle, and an "Exit" action.
 - `prefs.js`: GNOME 45+ preferences window (libadwaita), separate process
   from the shell — must not import `St`/`Clutter`/`Meta`/`Shell` here. Not
-  built yet — see [Install flow](#install-flow) below; the
-  Notifications/Auto-refresh toggles currently live in the popup menu
-  instead, in-memory only.
+  built yet — see [Install flow](#install-flow) below; the Notifications
+  toggle currently lives in the popup menu instead, in-memory only.
 
 All file reads off the FileMonitor callback are async (`Gio.File` async
 APIs), never sync I/O on the shell's main loop.

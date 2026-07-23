@@ -12,9 +12,9 @@ your default `node` is older.
 
 Status: for the per-session implementation (see
 [ARCHITECTURE.md](ARCHITECTURE.md)). The pure logic (`resolveUiAction()`/
-`deriveEffectiveStatus()` in `lib/state.ts`, the formatting/token helpers in
-`lib/rateLimit.ts`, `resolveStatus()` in `hooks/lib/status.ts`) has vitest
-coverage (`npm test`) — this doc is for everything else: the GJS-dependent
+`deriveEffectiveStatus()` in `lib/state.ts`, `resolveStatus()` in
+`hooks/lib/status.ts`) has vitest coverage (`npm test`) — this doc is for
+everything else: the GJS-dependent
 glue in `extension.ts`, `lib/indicator.ts`, and `hooks/hook-handler.ts`'s
 stdin/fs wrapper, none of which can run under Node. This is what to run by
 hand after touching `src/extension/extension.ts`, anything under
@@ -198,56 +198,37 @@ regression, not expected behavior.
 
 Click the indicator to open the menu.
 
-- **Claude Usage section** — a labeled separator followed by a "Refresh
-  Usage" button and the 5h/7d rows (account-level, not per-session).
-  - **5h / 7d rows** — needs a token file first; see
-    [EXTENSION.md](EXTENSION.md#setting-up-the-claude-usage-token) for how
-    to create `~/.config/claudewatch/token` (normally a symlink to
-    `~/.claude/.credentials.json`). They stay hidden until a check
-    succeeds, and re-hide while a new check is in flight rather than
-    showing stale numbers.
-  - **Auto-refresh on task complete** toggle — should be **off** immediately
-    after enabling the extension. With it off, run the "Drive the hook
-    handler directly" `Stop` event (or finish a real prompt) while the menu
-    is open and confirm the 5h/7d rows do **not** update on their own — only
-    clicking "Refresh Usage" should trigger a request. Turn the toggle on
-    and repeat: this time the rows should auto-refresh once per session
-    that transitions to done. With two sessions live, fire `Stop` on both
-    in the same beat and confirm the check only fires once per session's
-    own edge, not once per directory-monitor tick.
+- **Claude Usage section** — a labeled separator followed by a single "Show
+  usage" button (account-level, not per-session; this is the only usage
+  source in the extension — there's no inline rate-limit row in the menu).
   - **Notifications** toggle — should be **on** immediately after enabling
     the extension. Turn it off and run the "Drive the hook handler directly"
     `Notification` and `Stop` events, and confirm the panel color/text still
     transition but no `Main.notify` popup or sound fires. Turn the toggle
     back on and repeat: both events should now also produce a notification +
     themed sound. Toggling should never close the popup menu.
-  - **Show usage / Refresh Usage** button — clicking it should refresh the
-    5h/7d rows without closing the menu, showing "Checking…" while the
-    rate-limit request is in flight; its label starts as "Show usage" and
-    switches to "Refresh Usage" after the first successful check. Rename
-    the token file temporarily to confirm the "No token file at …" message
-    appears on this row (with both 5h/7d rows hidden) instead of a silent
-    failure; truncate it to an empty file to confirm "Token file is empty".
-    For the JSON token form, replace the file with `{}` to confirm "No
+  - **Show usage** button — needs a token file first; see
+    [EXTENSION.md](EXTENSION.md#setting-up-the-claude-usage-token) for how
+    to create `~/.config/claudewatch/token` (normally a symlink to
+    `~/.claude/.credentials.json`). Click it and confirm a terminal window
+    opens showing "Claude usage — detailed view", the 5h/7d utilization and
+    reset times (both a relative and absolute reset time), and a progress
+    bar counting up to "next refresh in 60s" that ticks down once per second
+    and triggers a fresh fetch when it completes — leave it running past one
+    full cycle to confirm the auto-refresh actually happens, not just the
+    countdown. Confirm Ctrl-C inside that terminal exits cleanly (a
+    "Stopped." line, no traceback) and closes only that window, not the
+    extension or any other session. Rename the token file temporarily to
+    confirm the terminal shows "No token file at …" instead of crashing;
+    truncate it to an empty file to confirm "Token file is empty". For the
+    JSON token form, replace the file with `{}` to confirm "No
     claudeAiOauth.accessToken in token file", and with a copy of
     `.credentials.json` whose `expiresAt` is edited into the past to
-    confirm "OAuth token expired — run claude to refresh it".
-  - **Detailed usage** — with the token file set up, click it and confirm a
-    terminal window opens showing "Claude usage — detailed view", the same
-    5h/7d numbers as the popup (now with both a relative and absolute reset
-    time), and a progress bar counting up to "next refresh in 60s" that
-    ticks down once per second and triggers a fresh fetch when it completes
-    — leave it running past one full cycle to confirm the auto-refresh
-    actually happens, not just the countdown. Confirm Ctrl-C inside that
-    terminal exits cleanly (a "Stopped." line, no traceback) and closes
-    only that window, not the extension or any other session. Rename/empty
-    the token file first to confirm the terminal shows the same "No token
-    file at …"/"Token file is empty"/"OAuth token expired…" text as the
-    "Show usage" row instead of crashing. To test the no-terminal-found
-    path, temporarily rename every terminal emulator binary on `PATH` (or
-    run in an environment without one) and confirm this row's own label
-    becomes an inline "no terminal emulator found on PATH" error instead of
-    the click silently doing nothing.
+    confirm "OAuth token expired — run claude to refresh it". To test the
+    no-terminal-found path, temporarily rename every terminal emulator
+    binary on `PATH` (or run in an environment without one) and confirm the
+    "Show usage" row's own label becomes an inline "no terminal emulator
+    found on PATH" error instead of the click silently doing nothing.
 - **Exit** — clicking it should remove the indicator from the panel
   immediately and it should not reappear on the next login (it's gone from
   `dconf read /org/gnome/shell/enabled-extensions`) until re-enabled via

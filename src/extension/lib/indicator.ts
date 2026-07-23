@@ -5,7 +5,6 @@ import GLib from "gi://GLib";
 import Gio from "gi://Gio";
 import Clutter from "gi://Clutter";
 import Pango from "gi://Pango";
-import Soup from "gi://Soup?version=3.0";
 import * as Main from "resource:///org/gnome/shell/ui/main.js";
 import * as PanelMenu from "resource:///org/gnome/shell/ui/panelMenu.js";
 import * as PopupMenu from "resource:///org/gnome/shell/ui/popupMenu.js";
@@ -15,12 +14,6 @@ import {
   deriveEffectiveStatus,
   type SessionState,
 } from "./state.js";
-import {
-  TOKEN_PATH,
-  RATE_LIMIT_URL,
-  formatRateLimitWindow,
-  resolveToken,
-} from "./rateLimit.js";
 import { pickTerminalCommand } from "./terminal.js";
 
 // Each live session gets its own label with the same state machine the
@@ -596,10 +589,10 @@ class AgentLabel {
 // Owns the panel indicator (`this.button`, a plain `PanelMenu.Button` — not
 // subclassed, since GJS's GObject-subclassing ceremony buys nothing here
 // over composition), the row of per-session AgentLabels inside it, and the
-// popup menu: the "Claude Usage" section (the opt-in account-level
-// rate-limit check). extension.js only owns directory-
-// watching wiring and hands this class parsed per-session state via
-// applyStates().
+// popup menu: the "Claude Usage" section (a single button that opens the
+// opt-in, terminal-based rate-limit check). extension.js only owns
+// directory-watching wiring and hands this class parsed per-session state
+// via applyStates().
 export class ClaudeWatchIndicator {
   button: InstanceType<typeof PanelMenu.Button>;
 
@@ -612,22 +605,10 @@ export class ClaudeWatchIndicator {
   // it's always a real PopupMenu here since we pass `false` below.
   private readonly _menu: PopupMenu.PopupMenu;
 
-  private readonly _rateLimit5hItem: InstanceType<
-    typeof PopupMenu.PopupMenuItem
-  >;
-  private readonly _rateLimit7dItem: InstanceType<
-    typeof PopupMenu.PopupMenuItem
-  >;
-  private readonly _autoRefreshItem: InstanceType<
-    typeof PopupMenu.PopupSwitchMenuItem
-  >;
   private readonly _notificationsItem: InstanceType<
     typeof PopupMenu.PopupSwitchMenuItem
   >;
-  private readonly _refreshUsageItem: InstanceType<
-    typeof PopupMenu.PopupMenuItem
-  >;
-  private readonly _detailedUsageItem: InstanceType<
+  private readonly _showUsageItem: InstanceType<
     typeof PopupMenu.PopupMenuItem
   >;
   private readonly _raiseIssueItem: InstanceType<
@@ -641,10 +622,8 @@ export class ClaudeWatchIndicator {
   >;
   private readonly _exitItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
 
-  private readonly _httpSession: InstanceType<typeof Soup.Session>;
   private readonly _extensionPath: string;
   private readonly _onSessionRetired: (sessionId: string) => void;
-  private _autoRefreshOnDone = false;
   private _notificationsEnabled = true;
   private readonly _agents = new Map<string, AgentLabel>();
   // Insertion order, oldest first — determines which sessions show inline
@@ -683,66 +662,23 @@ export class ClaudeWatchIndicator {
     this._box.add_child(this._overflowLabel);
 
     // Fixed width so the menu doesn't reflow as row text changes length
-    // (e.g. "Checking…" vs. a long rate-limit error string).
+    // (e.g. a long "failed to launch terminal" error string).
     this._menu.box.style = "width: 300px; min-width: 300px; max-width: 300px;";
 
     this._menu.addMenuItem(
       new PopupMenu.PopupSeparatorMenuItem("Claude Usage"),
     );
 
-    this._httpSession = new Soup.Session();
-
-    this._rateLimit5hItem = new PopupMenu.PopupMenuItem("", {
-      reactive: false,
-      can_focus: false,
-    });
-    this._rateLimit5hItem.visible = false;
-    this._menu.addMenuItem(this._rateLimit5hItem);
-
-    this._rateLimit7dItem = new PopupMenu.PopupMenuItem("", {
-      reactive: false,
-      can_focus: false,
-    });
-    this._rateLimit7dItem.visible = false;
-    this._menu.addMenuItem(this._rateLimit7dItem);
-
-    this._refreshUsageItem = new PopupMenu.PopupMenuItem("Show usage");
+    this._showUsageItem = new PopupMenu.PopupMenuItem("Show usage");
     // Default activate() chains to super.activate(), which PopupMenu treats
     // as a close-triggering click; override so clicking never closes the
-    // menu. This is a manual override on top of the automatic refreshes
-    // below — not the only way either row updates.
-    this._refreshUsageItem.activate = () => this._onRefreshUsageClicked();
-    // Error strings from _probeRateLimits() (e.g. an OAuth scope/permission
-    // message) can run well past the menu's fixed 300px width; without
-    // wrapping, St.Label just clips them instead of ellipsizing, hiding the
-    // actual reason.
-    this._refreshUsageItem.label.clutter_text.set({
+    // menu.
+    this._showUsageItem.activate = () => this._onShowUsageClicked();
+    this._showUsageItem.label.clutter_text.set({
       line_wrap: true,
       line_wrap_mode: Pango.WrapMode.WORD_CHAR,
     });
-    this._menu.addMenuItem(this._refreshUsageItem);
-
-    this._detailedUsageItem = new PopupMenu.PopupMenuItem("Detailed usage");
-    // Same close-triggering-click override as _refreshUsageItem above.
-    this._detailedUsageItem.activate = () => this._onDetailedUsageClicked();
-    this._detailedUsageItem.label.clutter_text.set({
-      line_wrap: true,
-      line_wrap_mode: Pango.WrapMode.WORD_CHAR,
-    });
-    this._menu.addMenuItem(this._detailedUsageItem);
-
-    this._autoRefreshItem = new PopupMenu.PopupSwitchMenuItem(
-      "Auto-refresh usage",
-      false,
-    );
-    this._autoRefreshItem.connect("toggled", (_item, state: boolean) => {
-      this._autoRefreshOnDone = state;
-    });
-    // Default activate() chains to super.activate(), which PopupMenu treats
-    // as a close-triggering click; override so toggling never closes the
-    // menu. toggle() still flips the switch and fires "toggled" above.
-    this._autoRefreshItem.activate = () => this._autoRefreshItem.toggle();
-    this._menu.addMenuItem(this._autoRefreshItem);
+    this._menu.addMenuItem(this._showUsageItem);
 
     this._menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem("Settings"));
 
@@ -798,8 +734,6 @@ export class ClaudeWatchIndicator {
   // contents every time the sessions directory changes — one entry per
   // sessions/<session_id>.json file currently on disk, keyed by session id.
   applyStates(states: ReadonlyMap<string, SessionState>): void {
-    let justCompleted = false;
-
     for (const [sessionId, label] of this._agents) {
       if (!states.has(sessionId)) label.handleMissing();
     }
@@ -807,10 +741,7 @@ export class ClaudeWatchIndicator {
     for (const [sessionId, state] of states) {
       const existing = this._agents.get(sessionId);
       if (existing) {
-        const wasDone = existing.uiState === "complete";
         existing.applyState(state, false);
-        const isDoneNow: UiState = existing.uiState;
-        if (!wasDone && isDoneNow === "complete") justCompleted = true;
         continue;
       }
       const status = deriveEffectiveStatus(
@@ -830,9 +761,6 @@ export class ClaudeWatchIndicator {
     }
 
     this._syncBox();
-    if (this._autoRefreshOnDone && justCompleted) {
-      this._refreshRateLimits();
-    }
   }
 
   private _createAgent(sessionId: string, state: SessionState): void {
@@ -900,20 +828,15 @@ export class ClaudeWatchIndicator {
     global.display.get_sound_player().play_from_theme(soundName, text, null);
   }
 
-  private _onRefreshUsageClicked(): void {
-    this._refreshRateLimits();
-  }
-
-  // Opens a terminal running detailed-usage.py — a fuller, auto-refreshing
-  // view of the same opt-in rate-limit check as _refreshRateLimits() above,
-  // just read from a terminal instead of this popup menu (see
-  // SECURITY.md#opt-in-network-egress-the-rate-limit-check). There's no
+  // Opens a terminal running detailed-usage.py — the opt-in rate-limit check
+  // (see SECURITY.md#opt-in-network-egress-the-rate-limit-check), read from a
+  // terminal since this is the only usage source in the menu. There's no
   // OS-level "default terminal" standard on Linux, so pickTerminalCommand()
   // (lib/terminal.ts) is necessarily best-effort: $TERMINAL first, then a
   // fixed list of common terminal emulators. Gio.Subprocess.new() can
   // genuinely throw (e.g. exec failure), so the try/catch here is a real
   // failure path, not defensive padding.
-  private _onDetailedUsageClicked(): void {
+  private _onShowUsageClicked(): void {
     const scriptPath = GLib.build_filenamev([
       this._extensionPath,
       "detailed-usage.py",
@@ -924,117 +847,18 @@ export class ClaudeWatchIndicator {
       (name) => GLib.find_program_in_path(name),
     );
     if (!argv) {
-      this._detailedUsageItem.label.set_text(
-        "Detailed usage — no terminal emulator found on PATH",
+      this._showUsageItem.label.set_text(
+        "Show usage — no terminal emulator found on PATH",
       );
       return;
     }
     try {
       Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
     } catch (e) {
-      this._detailedUsageItem.label.set_text(
-        `Detailed usage — failed to launch terminal: ${e instanceof Error ? e.message : String(e)}`,
+      this._showUsageItem.label.set_text(
+        `Show usage — failed to launch terminal: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
-  }
-
-  private _refreshRateLimits(): void {
-    this._refreshUsageItem.label.set_text("Checking…");
-    this._rateLimit5hItem.visible = false;
-    this._rateLimit7dItem.visible = false;
-    Gio.File.new_for_path(TOKEN_PATH).load_contents_async(
-      null,
-      (file, result) => {
-        let text: string;
-        try {
-          const [, contents] = file!.load_contents_finish(result);
-          text = new TextDecoder().decode(contents).trim();
-        } catch {
-          this._refreshUsageItem.label.set_text(
-            `No token file at ${TOKEN_PATH}`,
-          );
-          return;
-        }
-        if (!text) {
-          this._refreshUsageItem.label.set_text("Token file is empty");
-          return;
-        }
-        const { token, error } = resolveToken(text);
-        if (error || !token) {
-          this._refreshUsageItem.label.set_text(error ?? "No token found");
-          return;
-        }
-        this._probeRateLimits(token);
-      },
-    );
-  }
-
-  private _probeRateLimits(token: string): void {
-    const message = Soup.Message.new("GET", RATE_LIMIT_URL);
-    if (!message) {
-      this._refreshUsageItem.label.set_text(
-        "Rate limit check failed — bad URL",
-      );
-      return;
-    }
-    message.request_headers.append("authorization", `Bearer ${token}`);
-    message.request_headers.append("anthropic-beta", "oauth-2025-04-20");
-
-    this._httpSession.send_and_read_async(
-      message,
-      GLib.PRIORITY_DEFAULT,
-      null,
-      (session, result) => {
-        let bytes;
-        try {
-          bytes = session!.send_and_read_finish(result);
-        } catch (e) {
-          this._refreshUsageItem.label.set_text(
-            `Rate limit check failed — ${e instanceof Error ? e.message : String(e)}`,
-          );
-          return;
-        }
-        // Not message.get_status(): GJS throws when the raw HTTP status
-        // (e.g. 429) isn't one of libsoup's named Soup.Status enum values,
-        // which would abort this callback before any set_text() below runs
-        // and leave the row stuck on "Checking…" — status_code is the same
-        // guint without the enum marshaling.
-        const statusCode = message.status_code;
-        let data: {
-          error?: { message?: string };
-          five_hour?: import("./rateLimit.js").RateLimitWindow;
-          seven_day?: import("./rateLimit.js").RateLimitWindow;
-        } | null;
-        try {
-          const raw = bytes?.get_data();
-          data = raw ? JSON.parse(new TextDecoder().decode(raw)) : null;
-        } catch {
-          data = null;
-        }
-        if (statusCode < 200 || statusCode >= 300) {
-          const detail = data?.error?.message ?? `HTTP ${statusCode}`;
-          this._refreshUsageItem.label.set_text(
-            `Rate limit check failed — ${detail}`,
-          );
-          return;
-        }
-        if (!data) {
-          this._refreshUsageItem.label.set_text(
-            "Rate limit check failed — bad response",
-          );
-          return;
-        }
-        this._refreshUsageItem.label.set_text("Refresh Usage");
-        this._rateLimit5hItem.label.set_text(
-          formatRateLimitWindow(data.five_hour, "5h"),
-        );
-        this._rateLimit7dItem.label.set_text(
-          formatRateLimitWindow(data.seven_day, "7d"),
-        );
-        this._rateLimit5hItem.visible = true;
-        this._rateLimit7dItem.visible = true;
-      },
-    );
   }
 
   private _onExit(): void {
@@ -1054,9 +878,9 @@ export class ClaudeWatchIndicator {
     for (const label of this._agents.values()) label.destroy();
     this._agents.clear();
     this._order.length = 0;
-    // Nothing reads `button`/`_httpSession` after this call — extension.js
-    // drops its own reference to this indicator in the same disable() that
-    // calls destroy() — so there's no need to null them out here.
+    // Nothing reads `button` after this call — extension.js drops its own
+    // reference to this indicator in the same disable() that calls
+    // destroy() — so there's no need to null it out here.
     this.button.destroy();
   }
 }

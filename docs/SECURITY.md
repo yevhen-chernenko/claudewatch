@@ -39,30 +39,26 @@ remote endpoint.
 
 ### Opt-in network egress: the rate-limit check
 
-"Claude Usage" (`lib/indicator.ts`, `_refreshRateLimits`/`_probeRateLimits`)
-is the one feature that leaves the machine. It exists only because Anthropic
-doesn't expose 5-hour/7-day rate-limit utilization through any local file or
-documented CLI command — the only way to read it is a real network call.
-It's a `GET` to the dedicated `/api/oauth/usage` status endpoint (the same
-one the popular "Claude Code Usage Tracker" VS Code extension uses,
-confirmed by reading its bundled source), not a Messages completion — no
-model gets invoked, so unlike an earlier version of this feature, checking
-usage costs no API quota. Design constraints that keep this contained:
+"Show usage" (`lib/indicator.ts`, `_onShowUsageClicked`) opens a terminal
+running `extension/detailed-usage.py` — the only way this project surfaces
+5-hour/7-day rate-limit utilization, since Anthropic doesn't expose it
+through any local file or documented CLI command. The extension itself
+(the reviewed TypeScript package, `lib/indicator.ts` included) makes zero
+network calls of its own — there is no network-capable import anywhere
+under `src/extension/`. The actual `GET` to the dedicated `/api/oauth/usage`
+status endpoint (the same one the popular "Claude Code Usage Tracker" VS
+Code extension uses, confirmed by reading its bundled source) happens
+entirely inside that spawned, out-of-process script, on its own 60-second
+refresh loop. It's not a Messages completion — no model gets invoked, so
+checking usage costs no API quota.
 
-"Detailed usage" (`_onDetailedUsageClicked`) is a second, terminal-based
-entry point onto this exact same check, not a separate one: it opens a
-terminal running `extension/detailed-usage.py`, a stdlib-only script that
-reads the same `TOKEN_PATH` and calls the same single endpoint on its own
-60-second timer, so a fuller view fits than the popup menu's two compact
-rows. It's also the first (and only) feature where the extension spawns a
-subprocess — see the "External scripts/binaries" guideline below for why
-that's constrained, not just disclosed here: the script it launches is
-bundled plain-text source (never a compiled/opaque binary), the terminal
-choice comes from `pickTerminalCommand()` (`lib/terminal.ts`) trying
-`$TERMINAL` then a fixed list of known terminal emulators — never a
-user-configurable command — and the spawned process needs no elevated
-privileges. Everything below about the token/endpoint applies to this
-entry point exactly as it does to "Show usage"/"Refresh Usage".
+This is also the only feature where the extension spawns a subprocess at
+all — see the "External scripts/binaries" guideline below for why that's
+constrained, not just disclosed here: the script it launches is bundled
+plain-text source (never a compiled/opaque binary), the terminal choice
+comes from `pickTerminalCommand()` (`lib/terminal.ts`) trying `$TERMINAL`
+then a fixed list of known terminal emulators — never a user-configurable
+command — and the spawned process needs no elevated privileges.
 
 - **Opt-in by construction, not a setting**: the check does nothing unless
   `~/.config/claudewatch/token` exists. The extension never creates, writes,
@@ -71,36 +67,26 @@ entry point exactly as it does to "Show usage"/"Refresh Usage".
   [EXTENSION.md](EXTENSION.md#setting-up-the-claude-usage-token); the
   endpoint requires the `user:profile` scope, which only that interactive
   login credential carries — `claude setup-token` output lacks it and gets
-  rejected). No file, no network call, ever. The extension never goes
-  looking for `~/.claude/.credentials.json` on its own — it only ever reads
+  rejected). No file, no network call, ever. Neither the extension nor the
+  script goes looking for `~/.claude/.credentials.json` on its own — only
   the one path the user explicitly pointed at a credential, and the token
-  it finds there is never written anywhere, only held in memory for one
-  request.
-- **Off by default, opt-in cadence when enabled**: clicking "Show usage" /
-  "Refresh Usage" is always available and is the only way this request
-  fires by default. An
-  "Auto-refresh on task complete" switch (`_autoRefreshItem`, unchecked on
-  every `enable()`) lets the user opt into an automatic check as well; when
-  on, it fires once per Stop hook event (edge-triggered on the state file's
-  `status` transitioning to `"done"` — see `applyState()` in
-  `lib/indicator.ts`). There is no interval timer and no menu-open
-  auto-refresh either way. The toggle state lives only in memory
-  (`this._autoRefreshOnDone`), not in a GSettings key, so it resets to off
-  on every shell reload/session start rather than silently persisting an
-  opt-in across sessions.
+  found there is never written anywhere, only held in memory for the life
+  of one request.
+- **User-triggered only**: clicking "Show usage" is the only way the
+  terminal — and therefore the network request — ever launches. There is no
+  interval timer, no auto-refresh switch, and no menu-open trigger.
 - **Single fixed endpoint**: only ever talks to
   `https://api.anthropic.com/api/oauth/usage`. No user-configurable host, so
   the token can't be exfiltrated to an arbitrary destination via config.
 - **Token never touches any session state file or any other file the
   extension writes** — it is read from `TOKEN_PATH` and held only in memory
-  for the life of one
-  request.
-- **"Detailed usage" only ever launches one fixed, repo-bundled script**:
-  clicking it is the only way `Gio.Subprocess` fires; there is no menu-open
-  or interval-based auto-launch. The argv is always `<a terminal found on
-  PATH> <fixed flag> <the path to detailed-usage.py>` — never a
-  user-supplied path or command, so this can't be repurposed into running
-  arbitrary commands via config.
+  for the life of one request.
+- **Only one fixed, repo-bundled script is ever launched**: clicking "Show
+  usage" is the only way `Gio.Subprocess` fires in the whole extension;
+  there is no menu-open or interval-based auto-launch. The argv is always
+  `<a terminal found on PATH> <fixed flag> <the path to
+  detailed-usage.py>` — never a user-supplied path or command, so this
+  can't be repurposed into running arbitrary commands via config.
 
 If EGO review flags either of these, the mitigation is to ship the
 affected one disabled by default or split it into a separate optional
@@ -134,7 +120,7 @@ Re-check both before submission — guidelines evolve.
 - **External scripts/binaries**: "strongly discouraged... unless
   unavoidable." The hook handler already lives outside the reviewed package
   (Claude Code invokes it directly, not the extension), so this mainly
-  constrains what the _extension itself_ may spawn. "Detailed usage" is the
+  constrains what the _extension itself_ may spawn. "Show usage" is the
   one deliberate, disclosed instance of the extension itself spawning
   something (see "Opt-in network egress" above) — a dropdown button that
   opens a terminal is unavoidably a subprocess spawn. It follows the rule
@@ -215,14 +201,14 @@ Mitigations, concrete and ongoing (not a one-time pass before submission):
       merge (not overwrite), reversible uninstall — not implemented yet;
       no install-flow/prefs code exists (see ARCHITECTURE.md's install
       flow and ROADMAP.md's Phase 2 preferences-window item).
-- [x] No network calls except the opt-in, user-triggered "Claude Usage"
-      rate-limit check (see "Opt-in network egress" above) — everything
-      else in the extension and hook handler stays local-only. `Soup` is
-      only imported in `src/extension/lib/indicator.ts`, and only used inside
-      `_probeRateLimits()`.
-- [x] No subprocess spawning except the opt-in, user-triggered "Detailed
+- [x] No network calls anywhere in the extension itself — no
+      network-capable import exists under `src/extension/`. The opt-in,
+      user-triggered "Claude Usage" rate-limit check (see "Opt-in network
+      egress" above) happens entirely inside the spawned, out-of-process
+      `extension/detailed-usage.py`, not the reviewed package.
+- [x] No subprocess spawning except the opt-in, user-triggered "Show
       usage" button — `Gio.Subprocess` is only imported/used in
-      `_onDetailedUsageClicked()` (`lib/indicator.ts`), spawns only a
+      `_onShowUsageClicked()` (`lib/indicator.ts`), spawns only a
       terminal emulator plus the fixed, bundled `detailed-usage.py`, never
       a user-configurable command.
 - [x] No telemetry/analytics
