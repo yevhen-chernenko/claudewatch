@@ -1,5 +1,15 @@
 # Manual testing
 
+`npm test`/`npm run build` need Node ≥20.12 (`engines.node` in
+`package.json`, `.nvmrc` pins the dev version) — `vite`'s `rolldown`
+dependency imports `node:util`'s `styleText`, added in that Node release, so
+older Nodes fail at startup with a `SyntaxError` before a single test runs.
+This is a dev-toolchain-only requirement: the *installed* `hook-handler.js`
+is zero-dependency plain JS and runs fine on whatever ancient Node Claude
+Code itself already requires (see [SETUP.md](SETUP.md)'s Prerequisites) —
+only building/testing this repo needs the newer one. Run `nvm use` first if
+your default `node` is older.
+
 Status: for the per-session implementation (see
 [ARCHITECTURE.md](ARCHITECTURE.md)). The pure logic (`resolveUiAction()`/
 `deriveEffectiveStatus()` in `lib/state.ts`, the formatting/token helpers in

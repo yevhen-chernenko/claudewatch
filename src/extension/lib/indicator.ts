@@ -22,13 +22,15 @@ import {
   resolveToken,
 } from "./rateLimit.js";
 
-// Each live session gets its own label with the same four-state machine the
+// Each live session gets its own label with the same state machine the
 // single-session version had, minus the shared "standby" state: idle
 // sessions don't get a label at all (see "Agents are recovering ☕" below), a task in
 // flight ("running", pulsing), paused on a permission prompt or question
 // ("waiting", static), a manual /compact in progress ("compacting", pulsing
-// at the same rate as running), and the 5s flash right after a task
-// finishes ("complete", static) before the label is removed for good.
+// at the same rate as running), a Stop that landed while a subagent it
+// spawned hasn't reported back yet ("consulting", pulsing — see
+// waiting_background in hooks/lib/status.ts), and the 5s flash right after a
+// task finishes ("complete", static) before the label is removed for good.
 const STANDBY_TEXT = "Agents are recovering ☕";
 
 // Picked once per session (when its label is first created) and reused for
@@ -52,6 +54,13 @@ const AGENT_NAMES = [
 const runningText = (name: string) => `Agent ${name} is working 🕶️`;
 const waitingText = (name: string) => `Agent ${name} needs support 📞`;
 const completeText = (name: string) => `Agent ${name} is done 🎖️`;
+// agentType (SubagentStart's agent_type, e.g. "Explore") is best-effort —
+// last-started subagent wins when several are in flight at once, and it's
+// missing entirely on state files predating this field, hence the fallback.
+const consultingText = (name: string, agentType?: string) =>
+  agentType
+    ? `Agent ${name} is consulting ${agentType} 📓`
+    : `Agent ${name} is consulting notes 📓`;
 const COMPACTING_TEXT = "Agents are training 🔫"; // no agent name — it isn't retained into the next session
 
 // Backgrounds are all white-text-on-color, AA-contrast checked (≥4.5:1
@@ -66,6 +75,8 @@ const COMPLETE_STYLE =
   "padding: 0 6px; background-color: #1a7a43; border-radius: 4px; color: #ffffff;"; // 5.37:1
 const COMPACTING_STYLE =
   "padding: 0 6px; background-color: #7a3fa0; border-radius: 4px; color: #ffffff;"; // 6.89:1
+const CONSULTING_STYLE =
+  "padding: 0 6px; background-color: #106a6a; border-radius: 4px; color: #ffffff;"; // 6.38:1
 const OVERFLOW_STYLE =
   "padding: 0 6px; background-color: #333a3d; border-radius: 4px; color: #ffffff;"; // 11.6:1
 const COMPLETE_FLASH_MS = 5000;
@@ -103,12 +114,22 @@ const COMPACTING_STALE_MS = 3 * 60 * 1000;
 // task that's still genuinely in flight.
 const RUNNING_STALE_MS = 20 * 60 * 1000;
 
+// Same fallback shape as COMPACTING_STALE_MS above, for the same reason: the
+// fast path here is SubagentStop actually firing, but if the tracked
+// subagent's process were ever killed outright rather than cleanly
+// finishing, no hook fires for that either, and pid-liveness alone can't
+// catch it (the parent CLI is still alive and idling). On a longer leash
+// than RUNNING_STALE_MS since a real agentic subagent task (e.g. a
+// large-codebase Explore) can legitimately run long with no activity
+// visible to this session's own file in the meantime.
+const CONSULTING_STALE_MS = 45 * 60 * 1000;
+
 // Labels beyond this count collapse into a single "+N more" chip so the
 // panel bar can't grow unbounded with many concurrent sessions — full
 // detail for every session is always in the popup menu.
 const MAX_INLINE_AGENTS = 3;
 
-type UiState = "running" | "waiting" | "complete" | "compacting";
+type UiState = "running" | "waiting" | "complete" | "compacting" | "consulting";
 
 // Actor's `ease()` is JS-side sugar from environment.js (not
 // GIR-introspected, so ts-for-gir never sees it) — a real GNOME Shell API
@@ -140,13 +161,49 @@ function isSessionAlive(state: SessionState): boolean {
 
 // Plain-boolean computation of "has this session's own file gone quiet for
 // too long while stuck on running" — see RUNNING_STALE_MS above and
-// deriveEffectiveStatus's isRunningStale param in state.ts for why this
-// exists alongside isSessionAlive rather than being covered by it.
+// deriveEffectiveStatus's isStale param in state.ts for why this exists
+// alongside isSessionAlive rather than being covered by it.
 function isRunningStale(state: SessionState): boolean {
   if (state.status !== "running" || !state.updated_at) return false;
   const updatedAt = Date.parse(state.updated_at);
   if (Number.isNaN(updatedAt)) return false;
   return Date.now() - updatedAt > RUNNING_STALE_MS;
+}
+
+// Same shape as isRunningStale, for "compacting"/COMPACTING_STALE_MS and
+// "waiting_background"/CONSULTING_STALE_MS respectively. These two statuses
+// already have their own fallback via each AgentLabel's private
+// _armCompactingTimeout/_armConsultingTimeout GLib timer (see below), but
+// that timer is in-memory and only armed on entry into the state — an
+// extension or GNOME Shell reload while a label is mid-flight destroys and
+// recreates it from scratch, resetting the clock to zero. These file-
+// anchored checks close that gap the same way isRunningStale already does
+// for "running": fed through deriveEffectiveStatus, they get re-evaluated on
+// every applyStates() call, including the periodic re-scan in extension.ts,
+// so a session that's genuinely been stale since before a reload is caught
+// immediately on the next tick rather than only after a fresh multi-minute
+// wait.
+function isCompactingStale(state: SessionState): boolean {
+  if (state.status !== "compacting" || !state.updated_at) return false;
+  const updatedAt = Date.parse(state.updated_at);
+  if (Number.isNaN(updatedAt)) return false;
+  return Date.now() - updatedAt > COMPACTING_STALE_MS;
+}
+
+function isConsultingStale(state: SessionState): boolean {
+  if (state.status !== "waiting_background" || !state.updated_at) return false;
+  const updatedAt = Date.parse(state.updated_at);
+  if (Number.isNaN(updatedAt)) return false;
+  return Date.now() - updatedAt > CONSULTING_STALE_MS;
+}
+
+// state.status is singular, so at most one of the three checks above can
+// ever be true for a given state — this just dispatches to whichever one
+// applies before feeding deriveEffectiveStatus's single isStale param.
+function isStale(state: SessionState): boolean {
+  return (
+    isRunningStale(state) || isCompactingStale(state) || isConsultingStale(state)
+  );
 }
 
 // Picks a name for a newly-seen session, avoiding names already in use by
@@ -187,6 +244,7 @@ class AgentLabel {
   private _pulseDim = false;
   private _flashTimeoutId: number | null = null;
   private _compactingTimeoutId: number | null = null;
+  private _consultingTimeoutId: number | null = null;
   private _pulseTimeoutId: number | null = null;
   private _transcriptMonitor: InstanceType<typeof Gio.FileMonitor> | null =
     null;
@@ -231,13 +289,14 @@ class AgentLabel {
     const status = deriveEffectiveStatus(
       state.status,
       isSessionAlive(state),
-      isRunningStale(state),
+      isStale(state),
     );
     const action = resolveUiAction(status, this._lastStatus, isInitial);
     this._lastStatus = status ?? null;
     if (action === "running") this._enterRunning();
     else if (action === "waiting") this._enterWaiting();
     else if (action === "compacting") this._enterCompacting();
+    else if (action === "consulting") this._enterConsulting();
     else if (action === "complete") this._enterComplete();
     else if (action === "standby") {
       // Not a fresh "done" — the session went away without a clean finish
@@ -258,6 +317,12 @@ class AgentLabel {
       this._clearCompactingTimeout();
       this._stopWatchingTranscript();
     }
+    // Same arm-on-entry-only rule as compacting above, and for the same
+    // reason: re-arming on every repeat tick (fired by any session's file
+    // changing, not just this one's) would keep pushing the fallback clock
+    // out and it would never elapse.
+    if (action === "consulting") this._armConsultingTimeout();
+    else if (status !== "waiting_background") this._clearConsultingTimeout();
   }
 
   // The session's file disappeared from the directory entirely (SessionEnd
@@ -298,6 +363,24 @@ class AgentLabel {
     this._clearPulseTimeout();
     this.actor.style = COMPACTING_STYLE;
     this.actor.set_text(COMPACTING_TEXT);
+    this.actor.opacity = 255;
+    this._pulseDim = false;
+    this._pulseLoop();
+  }
+
+  // A Stop landed while a subagent this session spawned hasn't reported back
+  // via SubagentStop yet (waiting_background — see hooks/lib/status.ts).
+  // Pulses like running/compacting since this is genuine ongoing work, just
+  // not visible in the transcript the same way; unlike "waiting" it isn't a
+  // request for the user, so no notification fires.
+  private _enterConsulting(): void {
+    this._uiState = "consulting";
+    this._clearFlashTimeout();
+    this._clearPulseTimeout();
+    this.actor.style = CONSULTING_STYLE;
+    this.actor.set_text(
+      consultingText(this.agentName, this._state.backgroundAgentType),
+    );
     this.actor.opacity = 255;
     this._pulseDim = false;
     this._pulseLoop();
@@ -350,6 +433,26 @@ class AgentLabel {
         return GLib.SOURCE_REMOVE;
       },
     );
+  }
+
+  private _armConsultingTimeout(): void {
+    this._clearConsultingTimeout();
+    this._consultingTimeoutId = GLib.timeout_add(
+      GLib.PRIORITY_DEFAULT,
+      CONSULTING_STALE_MS,
+      () => {
+        this._consultingTimeoutId = null;
+        if (this._uiState === "consulting") this._retire();
+        return GLib.SOURCE_REMOVE;
+      },
+    );
+  }
+
+  private _clearConsultingTimeout(): void {
+    if (this._consultingTimeoutId) {
+      GLib.source_remove(this._consultingTimeoutId);
+      this._consultingTimeoutId = null;
+    }
   }
 
   private _clearCompactingTimeout(): void {
@@ -453,7 +556,12 @@ class AgentLabel {
   // GLib timeout always defers to the main loop regardless of the actor's
   // mapped state, so this can't recurse no matter what.
   private _pulseLoop(): void {
-    if (this._uiState !== "running" && this._uiState !== "compacting") return;
+    if (
+      this._uiState !== "running" &&
+      this._uiState !== "compacting" &&
+      this._uiState !== "consulting"
+    )
+      return;
     this._pulseDim = !this._pulseDim;
     (this.actor as unknown as Easeable).ease({
       opacity: this._pulseDim ? PULSE_DIM_OPACITY : 255,
@@ -474,6 +582,7 @@ class AgentLabel {
   destroy(): void {
     this._clearFlashTimeout();
     this._clearCompactingTimeout();
+    this._clearConsultingTimeout();
     this._clearPulseTimeout();
     this._stopWatchingTranscript();
     this.actor.remove_all_transitions();
@@ -691,12 +800,13 @@ export class ClaudeWatchIndicator {
       const status = deriveEffectiveStatus(
         state.status,
         isSessionAlive(state),
-        isRunningStale(state),
+        isStale(state),
       );
       if (
         status !== "running" &&
         status !== "waiting_approval" &&
-        status !== "compacting"
+        status !== "compacting" &&
+        status !== "waiting_background"
       ) {
         continue; // Not a session worth showing a fresh label for.
       }

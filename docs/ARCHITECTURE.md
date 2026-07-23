@@ -85,10 +85,20 @@ dead weight the hook handler has to keep in sync:
 ```jsonc
 {
   "session_id": "abc123",
-  "status": "running | waiting_approval | done | compacting",
+  "status": "running | waiting_approval | done | compacting | waiting_background",
   "updated_at": "2026-07-16T10:04:12Z",
   "transcript_path": "/home/user/.claude/.../transcript.jsonl",
   "pid": 12345,
+  // Hook-side bookkeeping only — see "Backgrounded subagent work" below.
+  // Not read by the extension; round-tripped by the hook handler itself.
+  "pendingBackgroundCount": 0,
+  // Same, for a backgrounded Bash call rather than a subagent — a
+  // heuristic rather than a precise count, see below for why.
+  "pendingBackgroundBash": false,
+  // Last SubagentStart's agent_type (e.g. "Explore"); read by the extension
+  // for the "consulting" label, meaningful only while status is
+  // waiting_background.
+  "backgroundAgentType": "Explore",
 }
 ```
 
@@ -103,8 +113,73 @@ same filesystem) — never a partial-write read by the extension.
 | `PreToolUse` (`tool_name: "AskUserQuestion"`) | `status: waiting_approval` — blocks on a direct user response, bypassing `PermissionRequest`/`Notification` |
 | `Notification` / `PermissionRequest` | `status: waiting_approval`, fire desktop notification (if the Notifications toggle is on) |
 | `PreCompact` (`trigger: "manual"`) | `status: compacting`; `trigger: "auto"` is a no-op — not surfaced as its own state |
-| `Stop` | `status: done`; the panel flashes green for 5s then the session's label retires |
+| `SubagentStart` | `status: running`; increments the session's `pendingBackgroundCount` and records `backgroundAgentType` (see below) |
+| `SubagentStop` | `status: running`; decrements `pendingBackgroundCount` (floored at 0) |
+| `Stop` | `status: done` if `pendingBackgroundCount` is 0 and `pendingBackgroundBash` is false, else `status: waiting_background`; a `done` flashes green for 5s then the session's label retires |
 | `SessionEnd` | delete the session's file immediately — the common-case cleanup path |
+
+### Backgrounded subagent work
+
+Without special-casing, `Stop` firing the moment a turn's *visible* activity
+ends looks identical whether the agent is actually done or it just kicked
+off a backgrounded Task/Agent tool call and is waiting on it — the panel
+would flash "done" (green) for a session that's de-facto still working, then
+flip back to "running" once the subagent's own next tool call reaches the
+hook stream. `SubagentStart`/`SubagentStop` bracket exactly one subagent
+call's lifetime regardless of whether it ran in the foreground or was
+backgrounded, so a running count (`pendingBackgroundCount`, carried across
+hook invocations in the session's own state file — see the schema above) is
+enough for `Stop` to tell the two cases apart: a real finish
+(`pendingBackgroundCount === 0`) still maps to `done`; a `Stop` that landed
+with a subagent still unaccounted for maps to `waiting_background` instead,
+which the extension renders as its own pulsing "consulting" state (see
+`indicator.ts`) rather than either "running" or "done". `backgroundAgentType`
+(the most recently started subagent's `agent_type`, e.g. `"Explore"`) rides
+along purely for that label's text — the session's `AgentLabel` and its
+picked name are unaffected either way, since both are keyed by `session_id`
+in the extension and never derived from hook payloads.
+
+A plain backgrounded `Bash` call (`run_in_background: true`, no subagent
+involved) has no equivalent bracketing hook — Claude Code's hook reference
+doesn't document a "backgrounded Bash job finished" event — so it can't be
+tracked as precisely as a subagent's `pendingBackgroundCount`. Instead,
+`pendingBackgroundBash` is a heuristic boolean: `hook-handler.ts` sets it
+when a `PreToolUse`/`PostToolUse` payload has `tool_name: "Bash"` and
+`tool_input.run_in_background === true` (true on both the launch's
+`PreToolUse` and its own immediate `PostToolUse` — that pair always lands
+before `Stop`, so neither is mistaken for the signal below), and clears it
+on the *first other hook event this session fires after a `Stop` already
+found it pending* (checked via the previous `status` in the state file,
+also read back in `readPriorState`). Claude Code doesn't fire hooks while a
+session is genuinely idle, so any further event is treated as evidence the
+session woke back up — either because the backgrounded command resolved, or
+because the user started a new turn regardless of it. That second case is a
+known imprecision: it clears `pendingBackgroundBash` even if the original
+command is technically still running in the background, which can let a
+*later* `Stop` read as `done` a beat early. Narrow enough in practice to
+accept without a real "job finished" hook to build on.
+
+`waiting_background` has its own staleness bound rather than sharing
+`RUNNING_STALE_MS` — a genuinely long-running backgrounded subagent
+shouldn't get its label retired on the same 20-minute leash as an ordinary
+tool call. If `SubagentStop` were ever to not fire at all (e.g. the
+subagent's process is killed outright rather than finishing cleanly) —
+pid-liveness on the parent CLI process wouldn't catch that, since the parent
+is still alive and idling — `isConsultingStale` in `indicator.ts` bounds it
+at `CONSULTING_STALE_MS` (45 minutes), the same shape as `isCompactingStale`/
+`COMPACTING_STALE_MS` for an abandoned `/compact`. Both are file-anchored off
+`updated_at`, exactly like `isRunningStale`, and feed into
+`deriveEffectiveStatus`'s single `isStale` param (one boolean, since
+`state.status` is singular — at most one of the three checks can be true for
+a given state) — so, like the `running` case below, they're re-evaluated on
+every `applyStates()` call, including the periodic re-scan, rather than
+relying solely on each `AgentLabel`'s own in-memory
+`_armCompactingTimeout`/`_armConsultingTimeout` GLib timer. That timer is
+still what fires the retirement in the common case, but being in-memory and
+armed only on entry into the state, it resets to zero if the extension or
+GNOME Shell reloads mid-flight; the file-anchored check is what catches a
+session that was already stale before such a reload, on the very next
+30-second tick instead of only after a fresh multi-minute wait.
 
 Garbage collection: `SessionEnd` deleting the file is the common path. Two
 fallbacks cover what it can't: (1) whenever an `AgentLabel` retires for any
@@ -122,8 +197,9 @@ a turn ends by interruption rather than a clean `Stop` (e.g. the user
 rejects/aborts a tool call and sends something else instead), Claude Code
 fires no hook at all for that — no `PostToolUse`, no `Stop`, no
 `SessionEnd` — and the CLI process just goes back to idling, alive the
-whole time. `deriveEffectiveStatus`'s `isRunningStale` param (`state.ts`),
-fed by `RUNNING_STALE_MS` in `indicator.ts`, is the fallback for that case:
+whole time. `deriveEffectiveStatus`'s `isStale` param (`state.ts`), fed by
+`isRunningStale`/`RUNNING_STALE_MS` in `indicator.ts`, is the fallback for
+that case:
 a "running" status whose file hasn't moved in 20 minutes is no longer
 trusted regardless of pid-liveness. The same periodic re-scan above is what
 re-evaluates it, so no separate timer is needed. On a much longer leash
@@ -187,13 +263,15 @@ section above.
   real cost.
 - **Exact hook event set** — resolved: `UserPromptSubmit`, `PreToolUse`,
   `PostToolUse`, `PreCompact`, `PermissionRequest`, `Notification`, `Stop`,
-  `SessionEnd`. Confirmed against the live hooks reference
-  ([hooks reference](https://code.claude.com/docs/en/hooks)): `session_id`
-  is present on every hook's payload, and `SessionEnd` fires on session
-  termination with no decision control — a plain side-effect hook, which is
-  all the cleanup path needs. `SessionStart` isn't wired up: nothing in the
-  current state machine needs a session to exist before its first real
-  activity, so skipping it avoids one more hook entry to install.
+  `SubagentStart`, `SubagentStop`, `SessionEnd`. Confirmed against the live
+  hooks reference ([hooks reference](https://code.claude.com/docs/en/hooks)):
+  `session_id` is present on every hook's payload, and `SessionEnd` fires on
+  session termination with no decision control — a plain side-effect hook,
+  which is all the cleanup path needs. `SubagentStart`/`SubagentStop` were
+  added for the "Backgrounded subagent work" case above. `SessionStart` isn't
+  wired up: nothing in the current state machine needs a session to exist
+  before its first real activity, so skipping it avoids one more hook entry
+  to install.
 - **Multi-session panel UI** — resolved differently than the aggregate-icon
   sketch above: one label per live session (capped, with overflow folding
   into a chip) rather than a single icon reflecting a priority-ordered

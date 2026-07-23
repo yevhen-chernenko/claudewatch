@@ -18,6 +18,12 @@ export interface SessionState {
   updated_at?: string;
   transcript_path?: string;
   pid?: number;
+  // Last-started subagent's agent_type (e.g. "Explore", "general-purpose"),
+  // only meaningful while status is "waiting_background" — see indicator.ts's
+  // "consulting" label. pendingBackgroundCount itself isn't listed here: it's
+  // hook-side bookkeeping only (see updateBackgroundTracking in
+  // hooks/lib/status.ts), nothing in the extension reads it directly.
+  backgroundAgentType?: string;
 }
 
 export type UiAction =
@@ -26,6 +32,7 @@ export type UiAction =
   | "complete"
   | "standby"
   | "compacting"
+  | "consulting"
   | null;
 
 // A "running"/"waiting_approval"/"compacting" status only means something
@@ -37,30 +44,38 @@ export type UiAction =
 // boolean (rather than doing the /proc lookup itself) so this stays pure and
 // testable like resolveUiAction below.
 //
-// isRunningStale covers a gap pid-liveness can't: Claude Code fires no hook
-// at all when a turn ends by interruption rather than a clean Stop — e.g.
-// the user rejects/aborts a tool call and sends something else instead, so
-// there's no PostToolUse, no Stop, no SessionEnd, and the CLI process just
-// goes back to idling. The session is genuinely alive throughout, so the
-// pid check alone can never tell that apart from a task still in flight,
-// and "running" would otherwise stick forever. Same shape of problem
-// indicator.ts's COMPACTING_STALE_MS bounds for an abandoned /compact;
-// isRunningStale is that same idea computed by the caller from
-// updated_at/now (see RUNNING_STALE_MS's own comment for why it's on a much
-// longer leash) and passed in as a plain boolean for the same testability
-// reason as isSessionAlive. Defaulted so existing 2-arg call sites are
-// unaffected.
+// isStale covers a gap pid-liveness can't: Claude Code fires no hook at all
+// when a turn ends by interruption rather than a clean Stop — e.g. the user
+// rejects/aborts a tool call and sends something else instead, so there's no
+// PostToolUse, no Stop, no SessionEnd, and the CLI process just goes back to
+// idling. The session is genuinely alive throughout, so the pid check alone
+// can never tell that apart from a task still in flight. The same gap
+// applies to an abandoned /compact or a subagent whose SubagentStop never
+// fires (process killed outright). isStale is that same idea computed by
+// the caller from each status's own updated_at/now threshold (RUNNING_STALE_MS,
+// COMPACTING_STALE_MS, CONSULTING_STALE_MS in indicator.ts) and passed in as
+// a plain boolean for the same testability reason as isSessionAlive —
+// file-anchored rather than an in-memory timer, so it survives an extension/
+// shell reload mid-status instead of the clock resetting to zero. Defaulted
+// so existing 2-arg call sites are unaffected.
 export function deriveEffectiveStatus(
   status: string | undefined,
   isSessionAlive: boolean,
-  isRunningStale: boolean = false,
+  isStale: boolean = false,
 ): string | undefined {
-  if (status === "running" && isRunningStale) return undefined;
+  if (
+    isStale &&
+    (status === "running" ||
+      status === "compacting" ||
+      status === "waiting_background")
+  )
+    return undefined;
   if (isSessionAlive) return status;
   if (
     status === "running" ||
     status === "waiting_approval" ||
-    status === "compacting"
+    status === "compacting" ||
+    status === "waiting_background"
   )
     return undefined;
   return status;
@@ -77,6 +92,11 @@ const ACTIVE_STATUS_ACTION: Record<
   running: "running",
   waiting_approval: "waiting",
   compacting: "compacting",
+  // A Stop that landed while a subagent it spawned hasn't reported back yet
+  // (see resolveStatus's Stop branch in hooks/lib/status.ts) — the turn
+  // looks finished but de-facto isn't, so this reads as its own active
+  // state rather than either "running" or "done".
+  waiting_background: "consulting",
 };
 
 // Pure edge-detection: decides which _enter* transition (if any) a refresh

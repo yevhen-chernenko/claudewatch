@@ -11,6 +11,9 @@ describe("resolveUiAction", () => {
       "waiting",
     );
     expect(resolveUiAction("compacting", undefined, true)).toBe("compacting");
+    expect(resolveUiAction("waiting_background", undefined, true)).toBe(
+      "consulting",
+    );
   });
 
   it("syncs to standby on the initial refresh for a non-active status", () => {
@@ -28,11 +31,26 @@ describe("resolveUiAction", () => {
     expect(resolveUiAction("waiting_approval", "running", false)).toBe(
       "waiting",
     );
+    expect(resolveUiAction("waiting_background", "running", false)).toBe(
+      "consulting",
+    );
   });
 
   it("does not re-fire the active-status edge when unchanged", () => {
     expect(resolveUiAction("running", "running", false)).toBeNull();
     expect(resolveUiAction("waiting_approval", "waiting_approval", false)).toBeNull();
+    expect(
+      resolveUiAction("waiting_background", "waiting_background", false),
+    ).toBeNull();
+  });
+
+  it("fires running again once a pending subagent reports back and the parent resumes", () => {
+    // waiting_background -> running is just another active-status edge, same
+    // rule as any other pair — called out explicitly since it's the specific
+    // transition the false "done" flash used to hide.
+    expect(resolveUiAction("running", "waiting_background", false)).toBe(
+      "running",
+    );
   });
 
   it("fires complete when status transitions to done", () => {
@@ -57,10 +75,11 @@ describe("deriveEffectiveStatus", () => {
     expect(deriveEffectiveStatus(undefined, true)).toBeUndefined();
   });
 
-  it("clears running/waiting_approval/compacting once the session is dead", () => {
+  it("clears running/waiting_approval/compacting/waiting_background once the session is dead", () => {
     expect(deriveEffectiveStatus("running", false)).toBeUndefined();
     expect(deriveEffectiveStatus("waiting_approval", false)).toBeUndefined();
     expect(deriveEffectiveStatus("compacting", false)).toBeUndefined();
+    expect(deriveEffectiveStatus("waiting_background", false)).toBeUndefined();
   });
 
   it("leaves done and other statuses untouched even when the session is dead", () => {
@@ -69,23 +88,35 @@ describe("deriveEffectiveStatus", () => {
     expect(deriveEffectiveStatus(undefined, false)).toBeUndefined();
   });
 
-  it("clears a stale running status even while the session is alive", () => {
+  it("clears a stale running/compacting/waiting_background status even while the session is alive", () => {
     // The pid check alone can't catch a turn that ended by interruption
-    // rather than a clean Stop — the CLI process is genuinely still alive,
-    // just idling with no further hook ever firing for that session.
+    // rather than a clean Stop (running), an abandoned /compact
+    // (compacting), or a subagent whose SubagentStop never fired
+    // (waiting_background) — the CLI process is genuinely still alive, just
+    // idling with no further hook ever firing for that session. isStale is
+    // computed by the caller per-status (see isRunningStale/
+    // isCompactingStale/isConsultingStale in indicator.ts), so a single
+    // boolean here stands in for whichever one applied.
     expect(deriveEffectiveStatus("running", true, true)).toBeUndefined();
+    expect(deriveEffectiveStatus("compacting", true, true)).toBeUndefined();
+    expect(
+      deriveEffectiveStatus("waiting_background", true, true),
+    ).toBeUndefined();
   });
 
-  it("does not treat waiting_approval or compacting as stale", () => {
+  it("does not treat waiting_approval as stale", () => {
+    // waiting_approval has no stale fallback at all — it's a direct request
+    // for the user, not background work with its own abandonment signal.
     expect(deriveEffectiveStatus("waiting_approval", true, true)).toBe(
       "waiting_approval",
     );
-    expect(deriveEffectiveStatus("compacting", true, true)).toBe(
-      "compacting",
-    );
   });
 
-  it("defaults isRunningStale to false for existing 2-arg call sites", () => {
+  it("defaults isStale to false for existing 2-arg call sites", () => {
     expect(deriveEffectiveStatus("running", true)).toBe("running");
+    expect(deriveEffectiveStatus("compacting", true)).toBe("compacting");
+    expect(deriveEffectiveStatus("waiting_background", true)).toBe(
+      "waiting_background",
+    );
   });
 });

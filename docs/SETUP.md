@@ -82,6 +82,12 @@ Step 1:
     "Stop": [
       { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
     ],
+    "SubagentStart": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
+    ],
     "SessionEnd": [
       { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
     ]
@@ -94,6 +100,10 @@ This is the complete event set the hook handler understands (see
 [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle--state-machine)) —
 omitting one just means that transition never shows up in the panel (e.g.
 skip `PreCompact` if you don't care about seeing the "training" state).
+Skipping `SubagentStart`/`SubagentStop` specifically means a session that
+spawns a subagent and stops the visible turn while it's still working (e.g.
+a backgrounded Task/Agent call) will flash "done" early instead of showing
+"consulting" — see ARCHITECTURE.md for why.
 `SessionEnd` is the one that matters most to not skip: without it, session
 state files are only cleaned up by the periodic re-scan / label-retirement
 fallbacks instead of immediately.

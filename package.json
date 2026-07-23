@@ -1,6 +1,9 @@
 {
   "name": "claudewatch",
   "private": true,
+  "engines": {
+    "node": ">=20.12.0"
+  },
   "scripts": {
     "build": "npm run build:extension && npm run build:hooks && npm run copy:assets",
     "build:extension": "tsc -p tsconfig.extension.json",
