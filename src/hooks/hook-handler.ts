@@ -22,10 +22,13 @@ interface HookInput {
   hook_event_name?: string;
   session_id?: string;
   transcript_path?: string;
-  // Only present on PreCompact; "manual" for /compact, "auto" when the
-  // context window fills up on its own. Only the former gets its own status
-  // — an auto-compact is an implementation detail of an already-running
-  // session, not something worth surfacing in the panel.
+  // Present on PreCompact and PostCompact; "manual" for /compact, "auto"
+  // when the context window fills up on its own. Only a manual PreCompact
+  // gets its own status — an auto-compact is an implementation detail of an
+  // already-running session, not something worth surfacing in the panel.
+  // A manual PostCompact is handled below (bypassing resolveStatus, same as
+  // SessionEnd) to end the "compacting" state it started; auto stays a
+  // no-op for the same reason auto PreCompact is.
   trigger?: string;
   // Only present on Notification; distinguishes an actual pending-input
   // reason (e.g. "permission_prompt") from unrelated ones the same event
@@ -89,7 +92,18 @@ const input = JSON.parse(fs.readFileSync(0, "utf-8")) as HookInput;
 const sessionId = input.session_id;
 if (!sessionId) process.exit(0);
 
-if (input.hook_event_name === "SessionEnd") {
+if (
+  input.hook_event_name === "SessionEnd" ||
+  (input.hook_event_name === "PostCompact" && input.trigger === "manual")
+) {
+  // A manual PostCompact means the "compacting" state PreCompact started
+  // has run to completion — clearing the file (rather than writing a
+  // status through resolveStatus) retires the label immediately with no
+  // "complete" flash, the same outcome _checkTranscriptForCompactOutcome()
+  // in indicator.ts already produces when it catches the same real-world
+  // event by tailing the transcript instead. Without this, nothing ever
+  // explicitly ends "compacting" — it was only ever cleared by that
+  // transcript-tailing fast path or, failing that, COMPACTING_STALE_MS.
   fs.rmSync(sessionFilePath(sessionId), { force: true });
   process.exit(0);
 }

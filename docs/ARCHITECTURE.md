@@ -113,6 +113,7 @@ same filesystem) — never a partial-write read by the extension.
 | `PreToolUse` (`tool_name: "AskUserQuestion"`) | `status: waiting_approval` — blocks on a direct user response, bypassing `PermissionRequest`/`Notification` |
 | `Notification` / `PermissionRequest` | `status: waiting_approval`, fire desktop notification (if the Notifications toggle is on) |
 | `PreCompact` (`trigger: "manual"`) | `status: compacting`; `trigger: "auto"` is a no-op — not surfaced as its own state |
+| `PostCompact` (`trigger: "manual"`) | delete the session's file immediately, bypassing `resolveStatus` (same as `SessionEnd`) — ends the `compacting` state the matching `PreCompact` started, with no `complete` flash; `trigger: "auto"` is a no-op, matching `PreCompact` |
 | `SubagentStart` | `status: running`; increments the session's `pendingBackgroundCount` and records `backgroundAgentType` (see below) |
 | `SubagentStop` | `status: running`; decrements `pendingBackgroundCount` (floored at 0) |
 | `Stop` | `status: done` if `pendingBackgroundCount` is 0 and `pendingBackgroundBash` is false, else `status: waiting_background`; a `done` flashes green for 5s then the session's label retires |
@@ -262,16 +263,22 @@ section above.
   `Gio.FileMonitor` tick can give, or if per-event disk I/O shows up as a
   real cost.
 - **Exact hook event set** — resolved: `UserPromptSubmit`, `PreToolUse`,
-  `PostToolUse`, `PreCompact`, `PermissionRequest`, `Notification`, `Stop`,
-  `SubagentStart`, `SubagentStop`, `SessionEnd`. Confirmed against the live
-  hooks reference ([hooks reference](https://code.claude.com/docs/en/hooks)):
-  `session_id` is present on every hook's payload, and `SessionEnd` fires on
-  session termination with no decision control — a plain side-effect hook,
-  which is all the cleanup path needs. `SubagentStart`/`SubagentStop` were
-  added for the "Backgrounded subagent work" case above. `SessionStart` isn't
-  wired up: nothing in the current state machine needs a session to exist
-  before its first real activity, so skipping it avoids one more hook entry
-  to install.
+  `PostToolUse`, `PreCompact`, `PostCompact`, `PermissionRequest`,
+  `Notification`, `Stop`, `SubagentStart`, `SubagentStop`, `SessionEnd`.
+  Confirmed against the live hooks reference
+  ([hooks reference](https://code.claude.com/docs/en/hooks)): `session_id`
+  is present on every hook's payload, and `SessionEnd` fires on session
+  termination with no decision control — a plain side-effect hook, which is
+  all the cleanup path needs. `SubagentStart`/`SubagentStop` were added for
+  the "Backgrounded subagent work" case above. `PostCompact` was added
+  later than the rest of this list — it didn't exist yet when the
+  transcript-tailing fallback in `_watchTranscriptForCompactOutcome()`
+  (indicator.ts) was written to work around its absence; that fallback
+  stays in place as the belt-and-suspenders path (it also covers a
+  cancelled /compact, which fires no hook at all — see EXTENSION.md).
+  `SessionStart` isn't wired up: nothing in the current state machine needs
+  a session to exist before its first real activity, so skipping it avoids
+  one more hook entry to install.
 - **Multi-session panel UI** — resolved differently than the aggregate-icon
   sketch above: one label per live session (capped, with overflow folding
   into a chip) rather than a single icon reflecting a priority-ordered

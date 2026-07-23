@@ -73,6 +73,9 @@ Step 1:
     "PreCompact": [
       { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
     ],
+    "PostCompact": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
+    ],
     "PermissionRequest": [
       { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
     ],
@@ -99,8 +102,12 @@ This is the complete event set the hook handler understands (see
 `resolveStatus()` in `src/hooks/lib/status.ts` and
 [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle--state-machine)) —
 omitting one just means that transition never shows up in the panel (e.g.
-skip `PreCompact` if you don't care about seeing the "training" state).
-Skipping `SubagentStart`/`SubagentStop` specifically means a session that
+skip `PreCompact`/`PostCompact` together if you don't care about seeing the
+"training" state). Skip `PreCompact` without `PostCompact` and a manual
+/compact will show "training" but never leave it except via the
+transcript-tailing fallback or, failing that, the 3-minute staleness
+timeout — install them as a pair. Skipping `SubagentStart`/`SubagentStop`
+specifically means a session that
 spawns a subagent and stops the visible turn while it's still working (e.g.
 a backgrounded Task/Agent call) will flash "done" early instead of showing
 "consulting" — see ARCHITECTURE.md for why.

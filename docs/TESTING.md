@@ -73,6 +73,19 @@ echo '{"hook_event_name":"PreCompact","trigger":"auto","session_id":"test-1"}' |
 # no-op: state file is untouched, panel doesn't move — auto-compact isn't
 # surfaced as its own state
 
+echo '{"hook_event_name":"PostCompact","trigger":"manual","session_id":"test-1"}' | node dist/hooks/hook-handler.js
+# deletes sessions/test-1.json immediately (same as SessionEnd, bypassing
+# resolveStatus entirely) — panel drops straight back to "Agents are
+# recovering ☕" with no green "complete" flash. Re-run the PreCompact
+# manual line above first if you want to see the purple state before this
+# clears it.
+
+echo '{"hook_event_name":"PreCompact","trigger":"manual","session_id":"test-1"}' | node dist/hooks/hook-handler.js
+echo '{"hook_event_name":"PostCompact","trigger":"auto","session_id":"test-1"}' | node dist/hooks/hook-handler.js
+# no-op, same as PreCompact/auto: state file still says "compacting", panel
+# stays purple — confirms PostCompact only ends the state for a manual
+# trigger, mirroring the PreCompact side that started it
+
 echo '{"hook_event_name":"PreCompact","trigger":"manual","session_id":"test-1"}' | node dist/hooks/hook-handler.js
 # panel -> "Agents are training 🔫" (purple) again. This state file has no
 # transcript_path, so _watchTranscriptForCompactOutcome() has nothing to
