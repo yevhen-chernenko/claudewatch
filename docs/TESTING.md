@@ -278,8 +278,13 @@ Click the indicator to open the menu.
     bar counting up to "next refresh in 60s" that ticks down once per second
     and triggers a fresh fetch when it completes — leave it running past one
     full cycle to confirm the auto-refresh actually happens, not just the
-    countdown. Confirm Ctrl-C inside that terminal exits cleanly (a
-    "Stopped." line, no traceback) and closes only that window, not the
+    countdown. If the account has per-model 7-day data or extra-usage
+    (pay-as-you-go overage) enabled, confirm the corresponding "7d opus" /
+    "7d sonnet" / "extra usage" rows appear too — and that they're absent
+    (not shown as "unavailable") for an account without them, since those
+    fields are optional rather than always-present. Confirm Ctrl-C inside
+    that terminal exits cleanly (a "Stopped." line, no traceback) and
+    closes only that window, not the
     extension or any other session. Rename the token file temporarily to
     confirm the terminal shows "No token file at …" instead of crashing;
     truncate it to an empty file to confirm "Token file is empty". For the

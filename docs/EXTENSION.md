@@ -257,8 +257,15 @@ bottom:
     `api.anthropic.com/api/oauth/usage` — a dedicated usage-status endpoint,
     not a Messages completion, so it costs no API quota to check (same
     endpoint the popular "Claude Code Usage Tracker" VS Code extension
-    uses). There's no local file or documented CLI command that exposes
-    this directly. Which terminal it opens is necessarily best-effort
+    uses). Beyond the always-shown 5h/7d combined windows, the response also
+    carries per-model 7-day windows (`seven_day_opus`/`seven_day_sonnet`)
+    and an `extra_usage` (pay-as-you-go overage) object; `render()` adds a
+    row for each only when the account actually has data for it (non-null
+    window, or `extra_usage.is_enabled`) rather than always reserving the
+    space — undocumented fields on an unofficial endpoint, so treat the
+    exact shape as best-effort, not a contract. There's no local file or
+    documented CLI command that exposes this directly. Which terminal it
+    opens is necessarily best-effort
     (`pickTerminalCommand()`, `lib/terminal.ts`): `$TERMINAL` if set, else
     the first of `gnome-terminal`/`kgx`/`konsole`/`xfce4-terminal`/`xterm`
     found on `PATH`. If none is found, or `Gio.Subprocess` fails to launch
@@ -325,4 +332,5 @@ Then click "Show usage" in the panel menu — it opens a terminal running
 `extension/detailed-usage.py`. A missing or empty token file, or a failed
 request, all resolve to an inline error/status line in that terminal
 instead of a silent failure. A successful check shows the current 5h/7d
-utilization and reset times, auto-refreshing every 60s.
+utilization and reset times, plus per-model 7d and extra-usage rows when
+the account has data for them, auto-refreshing every 60s.

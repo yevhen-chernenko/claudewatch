@@ -35,6 +35,9 @@ LABEL_WIDTH = 13
 COLOR_BANNER = "#7dd3fc"
 COLOR_FIVE_HOUR = "#f0883e"
 COLOR_SEVEN_DAY = "#4ade80"
+COLOR_OPUS = "#c084fc"
+COLOR_SONNET = "#60a5fa"
+COLOR_EXTRA = "#facc15"
 COLOR_REFRESH = "#7dd3fc"
 COLOR_LABEL = "#9aa4b2"
 COLOR_MUTED = "#6b7280"
@@ -145,6 +148,29 @@ def window_status(window):
     return percent, detail
 
 
+def render_optional_window_row(label, window, color):
+    # Unlike five_hour/seven_day, per-model windows are absent (not an
+    # error) when the account has no plan-level split for that model, so
+    # the row is skipped entirely rather than shown as "unavailable".
+    percent, detail = window_status(window)
+    if percent is None:
+        return None
+    return render_row(label, percent, f"{percent}%", color, detail)
+
+
+def render_extra_usage_row(extra_usage):
+    if not extra_usage or not extra_usage.get("is_enabled"):
+        return None
+    used = extra_usage.get("used_credits")
+    limit = extra_usage.get("monthly_limit")
+    detail = f"${used:.2f} / ${limit:.2f}" if used is not None and limit is not None else ""
+    percent = extra_usage.get("utilization")
+    if percent is None:
+        return f"{fg(COLOR_LABEL, 'Extra usage'.ljust(LABEL_WIDTH))} Enabled {detail}".rstrip()
+    percent = round(percent)
+    return render_row("Extra usage", percent, f"{percent}%", COLOR_EXTRA, detail)
+
+
 def fg(hex_color, text, bold=False):
     r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
     style = "1;" if bold else ""
@@ -161,7 +187,7 @@ def bar(percent, color):
 def render_row(label, fill_percent, value_text, color, detail="", label_color=COLOR_LABEL):
     label_part = fg(label_color, label.ljust(LABEL_WIDTH))
     bar_part = bar(fill_percent, color)
-    value_part = fg(color, value_text.rjust(5), bold=True)
+    value_part = fg(color, value_text.ljust(5), bold=True)
     detail_part = f" {detail}" if detail else ""
     return f"{label_part} {bar_part} {value_part}{detail_part}"
 
@@ -179,8 +205,7 @@ SEPARATOR_WIDTH = LABEL_WIDTH + 1 + BAR_WIDTH
 
 
 def separator():
-    pattern = "".join("#" if i % 2 == 0 else ":" for i in range(SEPARATOR_WIDTH))
-    out(fg(COLOR_BANNER, pattern))
+    out(fg(COLOR_BANNER, " " * SEPARATOR_WIDTH))
 
 
 def render(data, error, remaining):
@@ -208,15 +233,34 @@ def render(data, error, remaining):
         out(render_row("7d window", percent, f"{percent}%", COLOR_SEVEN_DAY, detail))
     separator()
 
+    opus_row = render_optional_window_row(
+        "7d opus", data.get("seven_day_opus") if data else None, COLOR_OPUS
+    )
+    if opus_row:
+        out(opus_row)
+        separator()
+
+    sonnet_row = render_optional_window_row(
+        "7d sonnet", data.get("seven_day_sonnet") if data else None, COLOR_SONNET
+    )
+    if sonnet_row:
+        out(sonnet_row)
+        separator()
+
+    extra_row = render_extra_usage_row(data.get("extra_usage") if data else None)
+    if extra_row:
+        out(extra_row)
+        separator()
+
     elapsed = REFRESH_SECONDS - remaining
     refresh_percent = 100 * elapsed / REFRESH_SECONDS
     out(
         render_row(
-            "next refresh",
+            "Next refresh",
             refresh_percent,
             f"{remaining}s",
             COLOR_REFRESH,
-            label_color=COLOR_MUTED,
+            label_color=COLOR_LABEL,
         )
     )
 
