@@ -912,6 +912,11 @@ export class ClaudeWatchIndicator {
   private _setPreviewState(kind: PreviewKind): void {
     this._clearPreview();
     if (kind === "standby") return;
+    // Previewing any non-standby state should show only that preview, not
+    // the standby label alongside it — _clearPreview() above just restored
+    // standby visibility based on real session count, which is normally 0
+    // during dev-menu clicking, so it needs hiding again here.
+    this._standbyLabel.visible = false;
     if (kind === "overflow") {
       this._previewActor = new St.Label({
         text: "+2 more",
@@ -924,7 +929,7 @@ export class ClaudeWatchIndicator {
     }
     this._previewLabel = new AgentLabel(
       "__preview__",
-      "Preview",
+      "Smith",
       () => {}, // No desktop notification/sound spam while clicking through states.
       () => this._clearPreview(),
     );
@@ -966,6 +971,11 @@ export class ClaudeWatchIndicator {
       this._previewActor.destroy();
       this._previewActor = null;
     }
+    // Restore standby to whatever real session count says it should be —
+    // covers both an explicit "Standby / clear preview" click and the
+    // "complete" preview auto-retiring itself via _onRetired() after its
+    // flash, neither of which should leave the standby label hidden.
+    this._standbyLabel.visible = this._order.length === 0;
   }
 
   // Desktop notification paired with a themed system sound — every waiting/
