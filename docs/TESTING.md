@@ -35,8 +35,8 @@ live, and only after a `npm run build`:
 ## Dev preview menu
 
 Fastest way to check a visual (color, text, pulse, flash timing) without
-driving a real hook event or writing a state file. Create a `.env` file at
-the repo root containing:
+driving a real hook event or writing a state file. Copy `.env.example` at
+the repo root to `.env` (or create `.env` from scratch) containing:
 
 ```sh
 CLAUDEWATCH_DEV=1
@@ -50,6 +50,11 @@ env var doesn't work for this: GNOME Shell inherits its environment from the
 display manager / login session, not from whatever terminal `npm run build`
 happens to run in, so the file is what actually gets read. Reload the
 extension (see above) to pick it up.
+
+To turn the menu back off without deleting the file, set `CLAUDEWATCH_DEV=0`
+(any value other than `1` is treated as off) and rebuild/reload; deleting
+`.env` entirely has the same effect, since a missing file is the normal,
+undecorated build.
 
 With it set, the popup menu gets a "Dev: preview state" section at the
 bottom with one button per possible panel look: Standby / clear preview,

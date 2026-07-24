@@ -24,10 +24,10 @@ cpSync(
   join(root, "dist", "extension", "ascii.txt"),
 );
 
-// Optional dev-mode flag (CLAUDEWATCH_DEV=1) — see docs/TESTING.md's "Dev
-// preview menu". Copied only when present so a normal checkout without a
-// root .env doesn't ship anything extra; indicator.ts's readDevModeFlag()
-// reads it back from next to the assets copied above.
+// Optional dev-mode flag (CLAUDEWATCH_DEV=1, see .env.example) — see
+// docs/TESTING.md's "Dev preview menu". Copied only when present so a normal
+// checkout without a root .env doesn't ship anything extra; indicator.ts's
+// readDevModeFlag() reads it back from next to the assets copied above.
 const dotEnvPath = join(root, ".env");
 if (existsSync(dotEnvPath)) {
   cpSync(dotEnvPath, join(root, "dist", "extension", ".env"));
