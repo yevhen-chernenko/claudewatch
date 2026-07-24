@@ -1,6 +1,4 @@
 <div align="center">
-<img src="extension/icons/claudewatch-symbolic.svg" width="88" alt="ClaudeWatch icon">
-
 # ClaudeWatch
 
 **Live Claude Code activity, right in your GNOME top panel.**
@@ -56,14 +54,14 @@ Each live Claude Code session gets its own panel label, cycling through
 these states (full state-machine details in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#session-lifecycle--state-machine)):
 
-| State | Color | Example label | When |
-| - | - | - | - |
-| 🟠 running | orange | "Agent Smith is working 🕶️" | a tool call or turn is in flight |
-| 🔵 waiting | blue | "Agent Smith needs support 📞" | paused on a permission prompt or a question — needs you |
-| 🟣 compacting | purple | "Agents are training 🔫" | a manual `/compact` is in progress |
-| 🟡 consulting | olive | "Agent Smith is consulting notes 📓" | the turn ended but a spawned subagent hasn't reported back yet |
-| 🟢 complete | green | "Agent Smith is done 🎖️" | just finished — flashes for 5s, then the label disappears |
-| ⚪ standby | grey | "Agents are recovering ☕" | no session is live |
+| State         | Color  | Example label                        | When                                                           |
+| ------------- | ------ | ------------------------------------ | -------------------------------------------------------------- |
+| 🟠 running    | orange | "Agent Smith is working 🕶️"          | a tool call or turn is in flight                               |
+| 🔵 waiting    | blue   | "Agent Smith needs support 📞"       | paused on a permission prompt or a question — needs you        |
+| 🟣 compacting | purple | "Agents are training 🔫"             | a manual `/compact` is in progress                             |
+| 🟡 consulting | olive  | "Agent Smith is consulting notes 📓" | the turn ended but a spawned subagent hasn't reported back yet |
+| 🟢 complete   | green  | "Agent Smith is done 🎖️"             | just finished — flashes for 5s, then the label disappears      |
+| ⚪ standby    | grey   | "Agents are recovering ☕"           | no session is live                                             |
 
 ### Multiple concurrent agents
 
@@ -75,7 +73,7 @@ single "+N more" chip, so a wall of terminals never floods the top panel.
 
 ### Works with the CLI, VS Code, and Claude Desktop
 
-ClaudeWatch never distinguishes *how* Claude Code was launched — hooks are
+ClaudeWatch never distinguishes _how_ Claude Code was launched — hooks are
 configured once, globally, in `~/.claude/settings.json`, and the CLI, the
 official VS Code extension, and Claude Desktop's Code tab all share that same
 settings file. Any locally-executing session is visible to ClaudeWatch
@@ -186,39 +184,160 @@ Step 1:
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "/absolute/path/to/claudewatch/dist/hooks/hook-handler.js",
+            ],
+            "async": true,
+          },
+        ],
+      },
     ],
     "PreToolUse": [
-      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "/absolute/path/to/claudewatch/dist/hooks/hook-handler.js",
+            ],
+            "async": true,
+          },
+        ],
+      },
     ],
     "PostToolUse": [
-      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "/absolute/path/to/claudewatch/dist/hooks/hook-handler.js",
+            ],
+            "async": true,
+          },
+        ],
+      },
     ],
     "PreCompact": [
-      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "/absolute/path/to/claudewatch/dist/hooks/hook-handler.js",
+            ],
+            "async": true,
+          },
+        ],
+      },
     ],
     "PostCompact": [
-      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "/absolute/path/to/claudewatch/dist/hooks/hook-handler.js",
+            ],
+            "async": true,
+          },
+        ],
+      },
     ],
     "PermissionRequest": [
-      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "/absolute/path/to/claudewatch/dist/hooks/hook-handler.js",
+            ],
+            "async": true,
+          },
+        ],
+      },
     ],
     "Notification": [
-      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "/absolute/path/to/claudewatch/dist/hooks/hook-handler.js",
+            ],
+            "async": true,
+          },
+        ],
+      },
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "/absolute/path/to/claudewatch/dist/hooks/hook-handler.js",
+            ],
+            "async": true,
+          },
+        ],
+      },
     ],
     "SubagentStart": [
-      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "/absolute/path/to/claudewatch/dist/hooks/hook-handler.js",
+            ],
+            "async": true,
+          },
+        ],
+      },
     ],
     "SubagentStop": [
-      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "/absolute/path/to/claudewatch/dist/hooks/hook-handler.js",
+            ],
+            "async": true,
+          },
+        ],
+      },
     ],
     "SessionEnd": [
-      { "hooks": [{ "type": "command", "command": "node", "args": ["/absolute/path/to/claudewatch/dist/hooks/hook-handler.js"], "async": true }] }
-    ]
-  }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "/absolute/path/to/claudewatch/dist/hooks/hook-handler.js",
+            ],
+            "async": true,
+          },
+        ],
+      },
+    ],
+  },
 }
 ```
 
@@ -304,15 +423,15 @@ npm test            # vitest, the pure-logic coverage
 
 ## Docs
 
-| Doc | What's in it |
-| - | - |
-| [SETUP.md](docs/SETUP.md) | The complete first-time setup walkthrough, plus troubleshooting |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full technical design: components, the session state file, the state machine |
-| [EXTENSION.md](docs/EXTENSION.md) | As-built extension internals: file layout, popup menu, the Claude Usage token |
-| [TESTING.md](docs/TESTING.md) | Manual test scripts and the dev preview menu for driving every panel state by hand |
-| [SECURITY.md](docs/SECURITY.md) | Threat model, the GNOME review checklist, opt-in network egress |
-| [ROADMAP.md](docs/ROADMAP.md) | Phased plan: Alpha (current) → Beta → ongoing open source |
-| [BACKLOG.md](docs/BACKLOG.md) | Concrete wishlist and bug tracker |
+| Doc                                     | What's in it                                                                       |
+| --------------------------------------- | ---------------------------------------------------------------------------------- |
+| [SETUP.md](docs/SETUP.md)               | The complete first-time setup walkthrough, plus troubleshooting                    |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full technical design: components, the session state file, the state machine       |
+| [EXTENSION.md](docs/EXTENSION.md)       | As-built extension internals: file layout, popup menu, the Claude Usage token      |
+| [TESTING.md](docs/TESTING.md)           | Manual test scripts and the dev preview menu for driving every panel state by hand |
+| [SECURITY.md](docs/SECURITY.md)         | Threat model, the GNOME review checklist, opt-in network egress                    |
+| [ROADMAP.md](docs/ROADMAP.md)           | Phased plan: Alpha (current) → Beta → ongoing open source                          |
+| [BACKLOG.md](docs/BACKLOG.md)           | Concrete wishlist and bug tracker                                                  |
 
 ## License
 
