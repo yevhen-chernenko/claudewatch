@@ -654,9 +654,7 @@ export class ClaudeWatchIndicator {
   private readonly _notificationsItem: InstanceType<
     typeof PopupMenu.PopupSwitchMenuItem
   >;
-  private readonly _showUsageItem: InstanceType<
-    typeof PopupMenu.PopupMenuItem
-  >;
+  private readonly _showUsageItem: InstanceType<typeof PopupMenu.PopupMenuItem>;
   private readonly _raiseIssueItem: InstanceType<
     typeof PopupMenu.PopupMenuItem
   >;
@@ -685,6 +683,11 @@ export class ClaudeWatchIndicator {
   // the moment any real session's file change triggers the next disk scan.
   private _previewLabel: AgentLabel | null = null;
   private _previewActor: InstanceType<typeof St.Label> | null = null;
+  // Extra inline AgentLabels for the "overflow" preview only — it shows two
+  // full running labels ahead of the "+N more" chip (held in _previewActor
+  // above) so the chip's neighboring context is visible too, not just the
+  // chip in isolation.
+  private readonly _previewOverflowLabels: AgentLabel[] = [];
 
   constructor(
     uuid: string,
@@ -802,7 +805,7 @@ export class ClaudeWatchIndicator {
         { label: "Compacting", kind: "compacting" },
         { label: "Consulting", kind: "consulting" },
         { label: "Complete", kind: "complete" },
-        { label: "Overflow chip (+N more)", kind: "overflow" },
+        { label: "Multi-agent & overflow", kind: "overflow" },
       ];
       for (const { label, kind } of previewItems) {
         const item = new PopupMenu.PopupMenuItem(label);
@@ -885,7 +888,15 @@ export class ClaudeWatchIndicator {
   // when nothing is live.
   private _syncBox(): void {
     const count = this._order.length;
-    this._standbyLabel.visible = count === 0;
+    // Skip while a dev preview is on screen — real disk-driven refreshes
+    // (the periodic timer, the sessions-dir file monitor) call this on their
+    // own schedule regardless of preview state, and would otherwise flip
+    // standby back on under a preview since real count is normally 0 during
+    // dev-menu testing. _setPreviewState()/_clearPreview() own standby
+    // visibility for the duration of a preview instead.
+    if (!this._previewLabel && !this._previewActor) {
+      this._standbyLabel.visible = count === 0;
+    }
     for (const [index, sessionId] of this._order.entries()) {
       const label = this._agents.get(sessionId);
       if (!label) continue;
@@ -918,13 +929,28 @@ export class ClaudeWatchIndicator {
     // during dev-menu clicking, so it needs hiding again here.
     this._standbyLabel.visible = false;
     if (kind === "overflow") {
+      for (const name of ["Smith", "Anderson"]) {
+        const label = new AgentLabel(
+          `__preview_overflow_${name}__`,
+          name,
+          () => {},
+          () => this._clearPreview(),
+        );
+        this._box.add_child(label.actor);
+        this._box.set_child_below_sibling(label.actor, this._overflowLabel);
+        label.applyState({ status: "running" }, true);
+        this._previewOverflowLabels.push(label);
+      }
       this._previewActor = new St.Label({
         text: "+2 more",
         y_align: Clutter.ActorAlign.CENTER,
         style: OVERFLOW_STYLE,
       });
       this._box.add_child(this._previewActor);
-      this._box.set_child_below_sibling(this._previewActor, this._overflowLabel);
+      this._box.set_child_below_sibling(
+        this._previewActor,
+        this._overflowLabel,
+      );
       return;
     }
     this._previewLabel = new AgentLabel(
@@ -971,6 +997,8 @@ export class ClaudeWatchIndicator {
       this._previewActor.destroy();
       this._previewActor = null;
     }
+    for (const label of this._previewOverflowLabels) label.destroy();
+    this._previewOverflowLabels.length = 0;
     // Restore standby to whatever real session count says it should be —
     // covers both an explicit "Standby / clear preview" click and the
     // "complete" preview auto-retiring itself via _onRetired() after its
