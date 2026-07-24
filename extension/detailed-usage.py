@@ -196,9 +196,22 @@ PADDING_TOP = 1
 PADDING_LEFT = 2
 MARGIN = " " * PADDING_LEFT
 
+# Erase-to-end-of-line, appended to every row so a shorter line this frame
+# still overwrites a longer one from the last frame — without it we'd need a
+# full-screen clear every render, which is what caused the visible blink
+# (clear -> blank frame -> repaint, once a second, forever).
+CLEAR_EOL = "\x1b[K"
+# Erase from the cursor to the end of the screen — same idea as CLEAR_EOL but
+# for a frame with fewer *rows* than the previous one (e.g. the error block
+# disappearing).
+CLEAR_TO_END = "\x1b[0J"
+
+_frame = []
+
 
 def out(text=""):
-    print(f"{MARGIN}{text}" if text else "")
+    line = f"{MARGIN}{text}" if text else ""
+    _frame.append(f"{line}{CLEAR_EOL}")
 
 
 SEPARATOR_WIDTH = LABEL_WIDTH + 1 + BAR_WIDTH
@@ -209,9 +222,9 @@ def separator():
 
 
 def render(data, error, remaining):
-    print("\x1b[2J\x1b[H", end="")
+    _frame.clear()
     for _ in range(PADDING_TOP):
-        print()
+        out()
 
     for line in LOGO_LINES:
         out(fg(COLOR_BANNER, line))
@@ -269,10 +282,18 @@ def render(data, error, remaining):
         out(error)
         out("Usage will be attempted to refresh on the next tick.")
 
+    # Cursor-home (not a full clear) plus one buffered write: the terminal
+    # gets a single atomic frame instead of ~15 separate print() flushes
+    # racing a blanked screen, which is what made every refresh visibly
+    # blink. CLEAR_TO_END mops up any rows a shorter frame (e.g. the error
+    # block disappearing) would otherwise leave stale below the last line.
+    sys.stdout.write("\x1b[H" + "\n".join(_frame) + "\n" + CLEAR_TO_END)
+    sys.stdout.flush()
+
 
 def main():
     data = None
-    sys.stdout.write(SET_TITLE + ALT_SCREEN_ENTER + HIDE_CURSOR)
+    sys.stdout.write(SET_TITLE + ALT_SCREEN_ENTER + HIDE_CURSOR + "\x1b[2J")
     sys.stdout.flush()
     try:
         while True:
