@@ -30,7 +30,18 @@ const STATUS_BY_EVENT: Record<string, SessionStatus> = {
 // after a normal turn already ended; auth_success, elicitation_complete:
 // completions, not waits) must not surface as waiting_approval, or every
 // idle session flashes blue for no pending reason.
-const WAITING_NOTIFICATION_TYPES = new Set(["permission_prompt", "elicitation_dialog"]);
+//
+// agent_needs_input is emitted for a backgrounded subagent job (tracked the
+// same way pendingBackgroundCount is here) that has hit something blocking
+// on the user — not an alternate signal for the main turn, which already
+// has permission_prompt/elicitation_dialog and the PreToolUse tool_name
+// branch below. It's still a genuine "act now" signal, so it maps the same
+// way.
+const WAITING_NOTIFICATION_TYPES = new Set([
+  "permission_prompt",
+  "elicitation_dialog",
+  "agent_needs_input",
+]);
 
 // Tools that block on a direct user response (a rendered question/choice)
 // without ever going through PermissionRequest or a waiting Notification

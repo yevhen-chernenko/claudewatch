@@ -22,6 +22,9 @@ describe("resolveStatus", () => {
     expect(
       resolveStatus("Notification", undefined, "elicitation_dialog"),
     ).toBe("waiting_approval");
+    expect(
+      resolveStatus("Notification", undefined, "agent_needs_input"),
+    ).toBe("waiting_approval");
   });
 
   it("does not surface an idle nudge or a completion notification as waiting", () => {
@@ -29,6 +32,9 @@ describe("resolveStatus", () => {
     expect(resolveStatus("Notification", undefined, "auth_success")).toBeUndefined();
     expect(
       resolveStatus("Notification", undefined, "elicitation_complete"),
+    ).toBeUndefined();
+    expect(
+      resolveStatus("Notification", undefined, "agent_completed"),
     ).toBeUndefined();
     expect(resolveStatus("Notification", undefined)).toBeUndefined();
   });
