@@ -8,6 +8,7 @@
 
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -22,6 +23,12 @@ TOKEN_PATH = (
 )
 RATE_LIMIT_URL = "https://api.anthropic.com/api/oauth/usage"
 REFRESH_SECONDS = 60 * 2  # auto-refresh cadence; change this to adjust it
+EXPIRED_ERROR = "OAuth token expired — run claude to refresh it"
+REFRESH_FAILED_ERROR = (
+    "OAuth token still expired after an automatic refresh attempt — "
+    "run claude to sign in again"
+)
+CREDENTIAL_REFRESH_TIMEOUT = 15
 BAR_WIDTH = 30
 LABEL_WIDTH = 13
 
@@ -66,7 +73,7 @@ def resolve_token(text):
         return None, "No claudeAiOauth.accessToken in token file"
     expires_at = oauth.get("expiresAt")
     if expires_at is not None and expires_at < time.time() * 1000:
-        return None, "OAuth token expired — run claude to refresh it"
+        return None, EXPIRED_ERROR
     return access_token, None
 
 
@@ -78,6 +85,18 @@ def read_token():
     if not text:
         return None, "Token file is empty"
     return resolve_token(text)
+
+
+def attempt_credential_refresh():
+    # Reuses Claude Code's own refresh flow instead of reimplementing OAuth here.
+    try:
+        subprocess.run(
+            ["claude", "auth", "status", "--json"],
+            capture_output=True,
+            timeout=CREDENTIAL_REFRESH_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def fetch_usage(token):
@@ -214,6 +233,11 @@ def main():
     try:
         while True:
             token, error = read_token()
+            if error == EXPIRED_ERROR:
+                attempt_credential_refresh()
+                token, error = read_token()
+                if error == EXPIRED_ERROR:
+                    error = REFRESH_FAILED_ERROR
             if not error:
                 fetched, error = fetch_usage(token)
                 if fetched is not None:

@@ -279,10 +279,19 @@ Click the indicator to open the menu.
     confirm the terminal shows "No token file at …" instead of crashing;
     truncate it to an empty file to confirm "Token file is empty". For the
     JSON token form, replace the file with `{}` to confirm "No
-    claudeAiOauth.accessToken in token file", and with a copy of
-    `.credentials.json` whose `expiresAt` is edited into the past to
-    confirm "OAuth token expired — run claude to refresh it". To test the
-    no-terminal-found path, temporarily rename every terminal emulator
+    claudeAiOauth.accessToken in token file". To test the expired-token
+    path, replace the file with a disconnected copy of `.credentials.json`
+    (not the symlink) whose `expiresAt` is edited into the past — the
+    script will call `claude auth status --json` to try refreshing it, but
+    since that only ever touches the real `~/.claude/.credentials.json` and
+    not this detached copy, it stays expired and the terminal should settle
+    on "OAuth token still expired after an automatic refresh attempt — run
+    claude to sign in again" within about 15s. To test the auto-refresh
+    actually succeeding, back up the real `~/.claude/.credentials.json`
+    first, then edit its `expiresAt` (through the still-in-place symlink)
+    into the past and confirm the terminal recovers on its own within one
+    cycle with no error shown — restore the backup if it doesn't. To test
+    the no-terminal-found path, temporarily rename every terminal emulator
     binary on `PATH` (or run in an environment without one) and confirm the
     "Show usage" row's own label becomes an inline "no terminal emulator
     found on PATH" error instead of the click silently doing nothing.

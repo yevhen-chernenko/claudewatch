@@ -74,19 +74,33 @@ command — and the spawned process needs no elevated privileges.
   of one request.
 - **User-triggered only**: clicking "Show usage" is the only way the
   terminal — and therefore the network request — ever launches. There is no
-  interval timer, no auto-refresh switch, and no menu-open trigger.
+  interval timer and no menu-open trigger; the script's own 60-second loop
+  only re-checks usage for a terminal the user already opened.
 - **Single fixed endpoint**: only ever talks to
   `https://api.anthropic.com/api/oauth/usage`. No user-configurable host, so
   the token can't be exfiltrated to an arbitrary destination via config.
+- **Credential auto-refresh, same opt-in gate**: if `resolve_token()` finds
+  the token file's `expiresAt` in the past, the script runs
+  `claude auth status --json` — a fixed argv, output discarded, 15s timeout,
+  failures (missing binary, still-expired afterward) swallowed and reported
+  as an inline error rather than raised — so the CLI can refresh its own
+  `.credentials.json` in place using its own trusted refresh flow, instead
+  of this script reimplementing OAuth. This only runs against the same
+  file the user already opted in by pointing `TOKEN_PATH` at, and only when
+  it's already in the expired state; it is not a new standing trigger.
 - **Token never touches any session state file or any other file the
   extension writes** — it is read from `TOKEN_PATH` and held only in memory
   for the life of one request.
-- **Only one fixed, repo-bundled script is ever launched**: clicking "Show
-  usage" is the only way `Gio.Subprocess` fires in the whole extension;
-  there is no menu-open or interval-based auto-launch. The argv is always
-  `<a terminal found on PATH> <fixed flag> <the path to
+- **Only one fixed, repo-bundled script is ever launched by the extension
+  itself**: clicking "Show usage" is the only way `Gio.Subprocess` fires in
+  the whole extension; there is no menu-open or interval-based auto-launch.
+  The argv is always `<a terminal found on PATH> <fixed flag> <the path to
   detailed-usage.py>` — never a user-supplied path or command, so this
-  can't be repurposed into running arbitrary commands via config.
+  can't be repurposed into running arbitrary commands via config. That
+  spawned script may in turn launch one other fixed, non-bundled binary —
+  `claude auth status --json`, resolved off `PATH` like the terminal choice
+  — but only for the credential auto-refresh described above, never with a
+  user-configurable argv.
 
 If EGO review flags either of these, the mitigation is to ship the
 affected one disabled by default or split it into a separate optional

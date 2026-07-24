@@ -311,8 +311,15 @@ raw-token form stays supported in case setup-token ever gains the scope.
 The symlink target is Claude Code's own credential file (already `0600`),
 and Claude Code refreshes the access token in it whenever it runs — each
 refresh in the terminal view re-reads the file, so it always sends the
-current token. If the check reports "OAuth token expired", the fix is just
-to run `claude` once so it refreshes the credential.
+current token. If the check finds the token expired, it now runs
+`claude auth status --json` itself first (see
+[SECURITY.md](SECURITY.md#opt-in-network-egress-the-rate-limit-check)) to
+trigger that same refresh before re-reading the file, so most expiries
+resolve on their own without leaving the terminal. If that attempt doesn't
+clear it — `claude` isn't on `PATH`, or the refresh token itself is dead —
+the terminal reports "OAuth token still expired after an automatic refresh
+attempt — run claude to sign in again", meaning an interactive `claude`
+login is actually needed.
 
 Then click "Show usage" in the panel menu — it opens a terminal running
 `extension/detailed-usage.py`. A missing or empty token file, or a failed
