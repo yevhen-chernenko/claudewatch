@@ -180,7 +180,7 @@ echo '{"hook_event_name":"SubagentStart","session_id":"consult-1","agent_type":"
 # its own, it only increments the session's pendingBackgroundCount
 
 echo '{"hook_event_name":"Stop","session_id":"consult-1"}' | node dist/hooks/hook-handler.js
-# panel -> "Agent <name> is consulting "Explore" manual 📓" (olive, pulsing)
+# panel -> "Agent <name> is consulting notes 📓" (olive, pulsing)
 # — the visible turn ended but the subagent it spawned hasn't reported back
 # yet, so this reads as its own "consulting" state instead of flashing
 # "done" early or looking stuck on "running"

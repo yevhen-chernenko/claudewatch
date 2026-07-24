@@ -19,10 +19,11 @@ export interface SessionState {
   transcript_path?: string;
   pid?: number;
   // Last-started subagent's agent_type (e.g. "Explore", "general-purpose"),
-  // only meaningful while status is "waiting_background" — see indicator.ts's
-  // "consulting" label. pendingBackgroundCount itself isn't listed here: it's
-  // hook-side bookkeeping only (see updateBackgroundTracking in
-  // hooks/lib/status.ts), nothing in the extension reads it directly.
+  // round-tripped by the hook handler but no longer read by the extension —
+  // indicator.ts's "consulting" label is now a fixed generic string.
+  // pendingBackgroundCount itself isn't listed here: it's hook-side
+  // bookkeeping only (see updateBackgroundTracking in hooks/lib/status.ts),
+  // nothing in the extension reads it directly.
   backgroundAgentType?: string;
 }
 

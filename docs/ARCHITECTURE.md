@@ -95,9 +95,9 @@ dead weight the hook handler has to keep in sync:
   // Same, for a backgrounded Bash call rather than a subagent — a
   // heuristic rather than a precise count, see below for why.
   "pendingBackgroundBash": false,
-  // Last SubagentStart's agent_type (e.g. "Explore"); read by the extension
-  // for the "consulting" label, meaningful only while status is
-  // waiting_background.
+  // Last SubagentStart's agent_type (e.g. "Explore"); round-tripped by the
+  // hook handler but no longer read by the extension, which shows a fixed
+  // generic "consulting" label regardless of agent_type.
   "backgroundAgentType": "Explore",
 }
 ```
@@ -134,11 +134,12 @@ enough for `Stop` to tell the two cases apart: a real finish
 (`pendingBackgroundCount === 0`) still maps to `done`; a `Stop` that landed
 with a subagent still unaccounted for maps to `waiting_background` instead,
 which the extension renders as its own pulsing "consulting" state (see
-`indicator.ts`) rather than either "running" or "done". `backgroundAgentType`
-(the most recently started subagent's `agent_type`, e.g. `"Explore"`) rides
-along purely for that label's text — the session's `AgentLabel` and its
-picked name are unaffected either way, since both are keyed by `session_id`
-in the extension and never derived from hook payloads.
+`indicator.ts`) rather than either "running" or "done", with a fixed generic
+label text — the session's `AgentLabel` and its picked name are unaffected
+either way, since both are keyed by `session_id` in the extension and never
+derived from hook payloads. `backgroundAgentType` (the most recently started
+subagent's `agent_type`, e.g. `"Explore"`) is still round-tripped in the
+state file by the hook handler, but the extension no longer reads it.
 
 A plain backgrounded `Bash` call (`run_in_background: true`, no subagent
 involved) has no equivalent bracketing hook — Claude Code's hook reference

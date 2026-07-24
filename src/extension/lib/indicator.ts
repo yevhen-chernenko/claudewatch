@@ -48,13 +48,7 @@ const AGENT_NAMES = [
 const runningText = (name: string) => `Agent ${name} is working 🕶️`;
 const waitingText = (name: string) => `Agent ${name} needs support 📞`;
 const completeText = (name: string) => `Agent ${name} is done 🎖️`;
-// agentType (SubagentStart's agent_type, e.g. "Explore") is best-effort —
-// last-started subagent wins when several are in flight at once, and it's
-// missing entirely on state files predating this field, hence the fallback.
-const consultingText = (name: string, agentType?: string) =>
-  agentType
-    ? `Agent ${name} is consulting "${agentType}" manual 📓`
-    : `Agent ${name} is consulting notes 📓`;
+const consultingText = (name: string) => `Agent ${name} is consulting notes 📓`;
 const COMPACTING_TEXT = "Agents are training 🔫"; // no agent name — it isn't retained into the next session
 
 // Backgrounds are all white-text-on-color, AA-contrast checked (≥4.5:1
@@ -420,9 +414,7 @@ class AgentLabel {
     this._clearFlashTimeout();
     this._clearPulseTimeout();
     this.actor.style = CONSULTING_STYLE;
-    this.actor.set_text(
-      consultingText(this.agentName, this._state.backgroundAgentType),
-    );
+    this.actor.set_text(consultingText(this.agentName));
     this.actor.opacity = 255;
     this._pulseDim = false;
     this._pulseLoop();
@@ -984,7 +976,6 @@ export class ClaudeWatchIndicator {
       consulting: "waiting_background",
     };
     const state: SessionState = { status: statusForKind[kind] };
-    if (kind === "consulting") state.backgroundAgentType = "Explore";
     this._previewLabel.applyState(state, true);
   }
 

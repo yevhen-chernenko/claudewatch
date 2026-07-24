@@ -44,7 +44,8 @@ interface HookInput {
   tool_input?: { run_in_background?: boolean };
   // Present on SubagentStart/SubagentStop (and any hook firing inside a
   // subagent's own tool calls, which this handler doesn't otherwise use).
-  // Feeds updateBackgroundTracking's agentType, purely for display.
+  // Feeds updateBackgroundTracking's agentType; round-tripped into the
+  // state file but no longer read by the extension.
   agent_type?: string;
 }
 
@@ -156,7 +157,7 @@ if (status) {
       // by one that ended without ever firing Stop (killed terminal, crash).
       pid: process.ppid,
       // Round-trip fields for readPriorState above; backgroundAgentType is
-      // also read directly by the extension for the "consulting" label.
+      // no longer read by the extension, just carried along in the file.
       pendingBackgroundCount: tracking.pendingCount,
       pendingBackgroundBash: tracking.pendingBash,
       backgroundAgentType: tracking.agentType,
